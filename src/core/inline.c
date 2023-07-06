@@ -145,6 +145,11 @@ QuicLibraryGetCurrentPartition(
     void
     );
 
+QUIC_LIBRARY_PP*
+QuicLibraryGetPerProc(
+    void
+    );
+
 _IRQL_requires_max_(DISPATCH_LEVEL)
 uint16_t
 QuicPartitionIdCreate(
@@ -359,6 +364,13 @@ QuicCongestionControlOnDataLost(
     );
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
+void
+QuicCongestionControlOnEcn(
+    _In_ QUIC_CONGESTION_CONTROL* Cc,
+    _In_ const QUIC_ECN_EVENT* EcnEvent
+    );
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
 BOOLEAN
 QuicCongestionControlOnSpuriousCongestionEvent(
     _In_ QUIC_CONGESTION_CONTROL* Cc
@@ -386,6 +398,18 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 uint32_t
 QuicCongestionControlGetBytesInFlightMax(
     _In_ const QUIC_CONGESTION_CONTROL* Cc
+    );
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+BOOLEAN
+QuicCongestionControlIsAppLimited(
+    _In_ struct QUIC_CONGESTION_CONTROL* Cc
+    );
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+QuicCongestionControlSetAppLimited(
+    _In_ struct QUIC_CONGESTION_CONTROL* Cc
     );
 
 QUIC_CONNECTION*
@@ -492,6 +516,7 @@ uint16_t
 QuicPacketEncodeLongHeaderV1(
     _In_ uint32_t Version, // Allows for version negotiation forcing
     _In_ uint8_t PacketType,
+    _In_ BOOLEAN FixedBit,
     _In_ const QUIC_CID* const DestCid,
     _In_ const QUIC_CID* const SourceCid,
     _In_ uint16_t TokenLength,
@@ -514,6 +539,7 @@ QuicPacketEncodeShortHeaderV1(
     _In_ uint8_t PacketNumberLength,
     _In_ BOOLEAN SpinBit,
     _In_ BOOLEAN KeyPhase,
+    _In_ BOOLEAN FixedBit,
     _In_ uint16_t BufferLength,
     _Out_writes_bytes_opt_(BufferLength)
         uint8_t* Buffer
@@ -747,6 +773,13 @@ QuicConnGetDestCidFromSeq(
     _In_ QUIC_CONNECTION* Connection,
     _In_ QUIC_VAR_INT SequenceNumber,
     _In_ BOOLEAN RemoveFromList
+    );
+
+void
+QuicConnTimerSet(
+    _Inout_ QUIC_CONNECTION* Connection,
+    _In_ QUIC_CONN_TIMER_TYPE Type,
+    _In_ uint64_t DelayUs
     );
 
 uint8_t

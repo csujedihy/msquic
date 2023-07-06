@@ -34,7 +34,7 @@ param (
     [string]$Platform = "",
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("schannel", "openssl", "")]
+    [ValidateSet("schannel", "openssl", "openssl3", "")]
     [string]$Tls = "",
 
     [Parameter(Mandatory = $false)]
@@ -77,6 +77,8 @@ if ("" -eq $Arch) {
         } else {
             Write-Error "Unknown architecture"
         }
+    } elseif ($IsLinux) {
+        $Arch = "$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)".ToLower()
     } else {
         $Arch = "x64"
     }
@@ -88,6 +90,28 @@ if ("" -eq $Tls) {
         $Tls = "schannel"
     } else {
         $Tls = "openssl"
+        try {
+            # If no Tls was specified, try to guess it based on default OpenSSL version
+            # This is more complicated in attempt to silently deal with missing openssl executable
+            #
+            $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+            $pinfo.FileName = "openssl"
+            $pinfo.Arguments = "version"
+            $pinfo.RedirectStandardError = $true
+            $pinfo.RedirectStandardOutput = $true
+            $pinfo.UseShellExecute = $false
+
+            $p = New-Object System.Diagnostics.Process
+            $p.StartInfo = $pinfo
+            $p.Start() | Out-Null
+            $p.WaitForExit()
+
+            $version = $p.StandardOutput.ReadToEnd()
+            if ($version -like "OpenSSL 3*")
+            {
+                $Tls = "openssl3"
+            }
+        } catch { }
     }
 }
 

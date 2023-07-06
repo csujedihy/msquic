@@ -20,8 +20,7 @@ QUIC_STATUS
 QuicStreamInitialize(
     _In_ QUIC_CONNECTION* Connection,
     _In_ BOOLEAN OpenedRemotely,
-    _In_ BOOLEAN Unidirectional,
-    _In_ BOOLEAN Opened0Rtt,
+    _In_ QUIC_STREAM_OPEN_FLAGS Flags,
     _Outptr_ _At_(*NewStream, __drv_allocatesMem(Mem))
         QUIC_STREAM** NewStream
     )
@@ -55,8 +54,15 @@ QuicStreamInitialize(
     Stream->Type = QUIC_HANDLE_TYPE_STREAM;
     Stream->Connection = Connection;
     Stream->ID = UINT64_MAX;
-    Stream->Flags.Unidirectional = Unidirectional;
-    Stream->Flags.Opened0Rtt = Opened0Rtt;
+    Stream->Flags.Unidirectional = !!(Flags & QUIC_STREAM_OPEN_FLAG_UNIDIRECTIONAL);
+    Stream->Flags.Opened0Rtt = !!(Flags & QUIC_STREAM_OPEN_FLAG_0_RTT);
+    Stream->Flags.DelayIdFcUpdate = !!(Flags & QUIC_STREAM_OPEN_FLAG_DELAY_ID_FC_UPDATES);
+    if (Stream->Flags.DelayIdFcUpdate) {
+        QuicTraceLogStreamVerbose(
+            ConfiguredForDelayedIDFC,
+            Stream,
+            "Configured for delayed ID FC updates");
+    }
     Stream->Flags.Allocated = TRUE;
     Stream->Flags.SendEnabled = TRUE;
     Stream->Flags.ReceiveEnabled = TRUE;
@@ -73,7 +79,7 @@ QuicStreamInitialize(
     Stream->RefTypeCount[QUIC_STREAM_REF_APP] = 1;
 #endif
 
-    if (Unidirectional) {
+    if (Stream->Flags.Unidirectional) {
         if (!OpenedRemotely) {
 
             //
@@ -157,16 +163,17 @@ QuicStreamFree(
     QUIC_CONNECTION* Connection = Stream->Connection;
     QUIC_WORKER* Worker = Connection->Worker;
 
-    CXPLAT_TEL_ASSERT(Stream->RefCount == 0);
-    CXPLAT_TEL_ASSERT(Connection->State.ClosedLocally || Stream->Flags.ShutdownComplete);
-    CXPLAT_TEL_ASSERT(Connection->State.ClosedLocally || Stream->Flags.HandleClosed);
-    CXPLAT_TEL_ASSERT(Stream->ClosedLink.Flink == NULL);
-    CXPLAT_TEL_ASSERT(Stream->SendLink.Flink == NULL);
+    CXPLAT_DBG_ASSERT(Stream->RefCount == 0);
+    CXPLAT_DBG_ASSERT(Connection->State.ClosedLocally || Stream->Flags.ShutdownComplete);
+    CXPLAT_DBG_ASSERT(Connection->State.ClosedLocally || Stream->Flags.HandleClosed);
+    CXPLAT_DBG_ASSERT(!Stream->Flags.InStreamTable);
+    CXPLAT_DBG_ASSERT(Stream->ClosedLink.Flink == NULL);
+    CXPLAT_DBG_ASSERT(Stream->SendLink.Flink == NULL);
 
     Stream->Flags.Uninitialized = TRUE;
 
-    CXPLAT_TEL_ASSERT(Stream->ApiSendRequests == NULL);
-    CXPLAT_TEL_ASSERT(Stream->SendRequests == NULL);
+    CXPLAT_DBG_ASSERT(Stream->ApiSendRequests == NULL);
+    CXPLAT_DBG_ASSERT(Stream->SendRequests == NULL);
 
 #if DEBUG
     CxPlatDispatchLockAcquire(&Connection->Streams.AllStreamsLock);
@@ -250,6 +257,32 @@ QuicStreamStart(
     Stream->Flags.Started = TRUE;
     Stream->Flags.IndicatePeerAccepted = !!(Flags & QUIC_STREAM_START_FLAG_INDICATE_PEER_ACCEPT);
 
+    //
+    // Cache flow blocked timings on connection so that the queried blocked timings only
+    // reflect time spent in a stream's lifetime.
+    //
+    uint64_t Now = CxPlatTimeUs64();
+    Stream->BlockedTimings.CachedConnSchedulingUs =
+        Stream->Connection->BlockedTimings.Scheduling.CumulativeTimeUs +
+        Stream->Connection->BlockedTimings.Scheduling.LastStartTimeUs != 0 ?
+            CxPlatTimeDiff64(Stream->Connection->BlockedTimings.Scheduling.LastStartTimeUs, Now) : 0;
+    Stream->BlockedTimings.CachedConnPacingUs =
+        Stream->Connection->BlockedTimings.Pacing.CumulativeTimeUs +
+        Stream->Connection->BlockedTimings.Pacing.LastStartTimeUs != 0 ?
+        CxPlatTimeDiff64(Stream->Connection->BlockedTimings.Pacing.LastStartTimeUs, Now) : 0;
+    Stream->BlockedTimings.CachedConnAmplificationProtUs =
+        Stream->Connection->BlockedTimings.AmplificationProt.CumulativeTimeUs +
+        Stream->Connection->BlockedTimings.AmplificationProt.LastStartTimeUs != 0 ?
+        CxPlatTimeDiff64(Stream->Connection->BlockedTimings.AmplificationProt.LastStartTimeUs, Now) : 0;
+    Stream->BlockedTimings.CachedConnCongestionControlUs =
+        Stream->Connection->BlockedTimings.CongestionControl.CumulativeTimeUs +
+        Stream->Connection->BlockedTimings.CongestionControl.LastStartTimeUs != 0 ?
+        CxPlatTimeDiff64(Stream->Connection->BlockedTimings.CongestionControl.LastStartTimeUs, Now) : 0;
+    Stream->BlockedTimings.CachedConnFlowControlUs =
+        Stream->Connection->BlockedTimings.FlowControl.CumulativeTimeUs +
+        Stream->Connection->BlockedTimings.FlowControl.LastStartTimeUs != 0 ?
+        CxPlatTimeDiff64(Stream->Connection->BlockedTimings.FlowControl.LastStartTimeUs, Now) : 0;
+
     QuicTraceEvent(
         StreamCreated,
         "[strm][%p] Created, Conn=%p ID=%llu IsLocal=%hhu",
@@ -269,7 +302,7 @@ QuicStreamStart(
         QuicStreamRecvGetState(Stream));
 
     if (Stream->Flags.SendEnabled) {
-        Stream->OutFlowBlockedReasons |= QUIC_FLOW_BLOCKED_APP;
+        QuicStreamAddOutFlowBlockedReason(Stream, QUIC_FLOW_BLOCKED_APP);
     }
 
     if (Stream->SendFlags != 0) {
@@ -295,17 +328,9 @@ QuicStreamStart(
             QuicConnIsServer(Stream->Connection),
             &Stream->Connection->PeerTransportParams);
     if (Stream->MaxAllowedSendOffset == 0) {
-        Stream->OutFlowBlockedReasons |= QUIC_FLOW_BLOCKED_STREAM_FLOW_CONTROL;
+        QuicStreamAddOutFlowBlockedReason(Stream, QUIC_FLOW_BLOCKED_STREAM_FLOW_CONTROL);
     }
     Stream->SendWindow = (uint32_t)CXPLAT_MIN(Stream->MaxAllowedSendOffset, UINT32_MAX);
-
-    if (Stream->OutFlowBlockedReasons != 0) {
-        QuicTraceEvent(
-            StreamOutFlowBlocked,
-            "[strm][%p] Send Blocked Flags: %hhu",
-            Stream,
-            Stream->OutFlowBlockedReasons);
-    }
 
 Exit:
 
@@ -335,7 +360,7 @@ QuicStreamClose(
 
     if (!Stream->Flags.ShutdownComplete) {
 
-        if (Stream->Flags.Started) {
+        if (Stream->Flags.Started && !Stream->Flags.HandleShutdown) {
             //
             // TODO - If the stream hasn't been aborted already, then this is a
             // fatal error for the connection. The QUIC transport cannot "just
@@ -358,14 +383,22 @@ QuicStreamClose(
                 QUIC_STREAM_SHUTDOWN_FLAG_IMMEDIATE,
             QUIC_ERROR_NO_ERROR);
 
-            if (!Stream->Flags.Started) {
-                //
-                // The stream was abandoned before it could be successfully
-                // started. Just mark it as completing the shutdown process now
-                // since nothing else can be done with it now.
-                //
-                Stream->Flags.ShutdownComplete = TRUE;
-            }
+        if (!Stream->Flags.Started) {
+            //
+            // The stream was abandoned before it could be successfully
+            // started. Just mark it as completing the shutdown process now
+            // since nothing else can be done with it now.
+            //
+            Stream->Flags.ShutdownComplete = TRUE;
+            CXPLAT_DBG_ASSERT(!Stream->Flags.InStreamTable);
+        }
+    }
+
+    if (Stream->Flags.DelayIdFcUpdate && Stream->Flags.ShutdownComplete) {
+        //
+        // Indicate the stream is completely shut down to the connection.
+        //
+        QuicStreamSetReleaseStream(&Stream->Connection->Streams, Stream);
     }
 
     Stream->ClientCallbackHandler = NULL;
@@ -438,11 +471,17 @@ QuicStreamIndicateStartComplete(
     _In_ QUIC_STATUS Status
     )
 {
+    if (Stream->Flags.StartedIndicated) {
+        return;
+    }
+    Stream->Flags.StartedIndicated = TRUE;
+
     QUIC_STREAM_EVENT Event;
     Event.Type = QUIC_STREAM_EVENT_START_COMPLETE;
     Event.START_COMPLETE.Status = Status;
     Event.START_COMPLETE.ID = Stream->ID;
     Event.START_COMPLETE.PeerAccepted =
+        QUIC_SUCCEEDED(Status) &&
         !(Stream->OutFlowBlockedReasons & QUIC_FLOW_BLOCKED_STREAM_ID_FLOW_CONTROL);
     QuicTraceLogStreamVerbose(
         IndicateStartComplete,
@@ -470,11 +509,23 @@ QuicStreamIndicateShutdownComplete(
             Stream->Connection->State.ClosedRemotely;
         Event.SHUTDOWN_COMPLETE.AppCloseInProgress =
             Stream->Flags.HandleClosed;
+        Event.SHUTDOWN_COMPLETE.ConnectionShutdownByApp =
+            Stream->Connection->State.AppClosed;
+        Event.SHUTDOWN_COMPLETE.ConnectionClosedRemotely =
+            Stream->Connection->State.ClosedRemotely;
+        Event.SHUTDOWN_COMPLETE.ConnectionErrorCode =
+            Stream->Connection->CloseErrorCode;
+        Event.SHUTDOWN_COMPLETE.ConnectionCloseStatus =
+            Stream->Connection->CloseStatus;
         QuicTraceLogStreamVerbose(
             IndicateStreamShutdownComplete,
             Stream,
-            "Indicating QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE [ConnectionShutdown=%hhu]",
-            Event.SHUTDOWN_COMPLETE.ConnectionShutdown);
+            "Indicating QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE [ConnectionShutdown=%hhu, ConnectionShutdownByApp=%hhu, ConnectionClosedRemotely=%hhu, ConnectionErrorCode=0x%llx, ConnectionCloseStatus=0x%x]",
+            Event.SHUTDOWN_COMPLETE.ConnectionShutdown,
+            Event.SHUTDOWN_COMPLETE.ConnectionShutdownByApp,
+            Event.SHUTDOWN_COMPLETE.ConnectionClosedRemotely,
+            Event.SHUTDOWN_COMPLETE.ConnectionErrorCode,
+            Event.SHUTDOWN_COMPLETE.ConnectionCloseStatus);
         (void)QuicStreamIndicateEvent(Stream, &Event);
 
         Stream->ClientCallbackHandler = NULL;
@@ -556,7 +607,9 @@ QuicStreamTryCompleteShutdown(
         //
         // Indicate the stream is completely shut down to the connection.
         //
-        QuicStreamSetReleaseStream(&Stream->Connection->Streams, Stream);
+        if (!Stream->Flags.DelayIdFcUpdate || Stream->Flags.HandleClosed) {
+            QuicStreamSetReleaseStream(&Stream->Connection->Streams, Stream);
+        }
     }
 }
 
@@ -714,6 +767,77 @@ QuicStreamParamGet(
         Status = QUIC_STATUS_SUCCESS;
         break;
 
+    case QUIC_PARAM_STREAM_STATISTICS: {
+
+        if (*BufferLength < sizeof(QUIC_STREAM_STATISTICS)) {
+            *BufferLength = sizeof(QUIC_STREAM_STATISTICS);
+            Status = QUIC_STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
+        if (Buffer == NULL) {
+            Status = QUIC_STATUS_INVALID_PARAMETER;
+            break;
+        }
+
+        if (!Stream->Flags.Started) {
+            Status = QUIC_STATUS_INVALID_STATE;
+            break;
+        }
+
+        uint64_t Now = CxPlatTimeUs64();
+        QUIC_STREAM_STATISTICS* Stats = (QUIC_STREAM_STATISTICS*)Buffer;
+        QUIC_CONNECTION* Connection = Stream->Connection;
+        Stats->StreamBlockedByIdFlowControlUs = Stream->BlockedTimings.StreamIdFlowControl.CumulativeTimeUs;
+        if (Stream->BlockedTimings.StreamIdFlowControl.LastStartTimeUs != 0) {
+            Stats->StreamBlockedByIdFlowControlUs +=
+                CxPlatTimeDiff64(Stream->BlockedTimings.StreamIdFlowControl.LastStartTimeUs, Now);
+        }
+        Stats->StreamBlockedByFlowControlUs = Stream->BlockedTimings.FlowControl.CumulativeTimeUs;
+        if (Stream->BlockedTimings.FlowControl.LastStartTimeUs != 0) {
+            Stats->StreamBlockedByFlowControlUs +=
+                CxPlatTimeDiff64(Stream->BlockedTimings.FlowControl.LastStartTimeUs, Now);
+        }
+        Stats->StreamBlockedByAppUs = Stream->BlockedTimings.App.CumulativeTimeUs;
+        if (Stream->BlockedTimings.App.LastStartTimeUs != 0) {
+            Stats->StreamBlockedByAppUs +=
+                CxPlatTimeDiff64(Stream->BlockedTimings.App.LastStartTimeUs, Now);
+        }
+        Stats->ConnBlockedBySchedulingUs = Connection->BlockedTimings.Scheduling.CumulativeTimeUs;
+        if (Connection->BlockedTimings.Scheduling.LastStartTimeUs != 0) {
+            Stats->ConnBlockedBySchedulingUs +=
+                CxPlatTimeDiff64(Connection->BlockedTimings.Scheduling.LastStartTimeUs, Now);
+        }
+        Stats->ConnBlockedBySchedulingUs -= Stream->BlockedTimings.CachedConnSchedulingUs;
+        Stats->ConnBlockedByPacingUs = Connection->BlockedTimings.Pacing.CumulativeTimeUs;
+        if (Connection->BlockedTimings.Pacing.LastStartTimeUs != 0) {
+            Stats->ConnBlockedByPacingUs +=
+                CxPlatTimeDiff64(Connection->BlockedTimings.Pacing.LastStartTimeUs, Now);
+        }
+        Stats->ConnBlockedByPacingUs -= Stream->BlockedTimings.CachedConnPacingUs;
+        Stats->ConnBlockedByAmplificationProtUs = Connection->BlockedTimings.AmplificationProt.CumulativeTimeUs;
+        if (Connection->BlockedTimings.AmplificationProt.LastStartTimeUs != 0) {
+            Stats->ConnBlockedByAmplificationProtUs +=
+                CxPlatTimeDiff64(Connection->BlockedTimings.AmplificationProt.LastStartTimeUs, Now);
+        }
+        Stats->ConnBlockedByAmplificationProtUs -= Stream->BlockedTimings.CachedConnAmplificationProtUs;
+        Stats->ConnBlockedByCongestionControlUs = Connection->BlockedTimings.CongestionControl.CumulativeTimeUs;
+        if (Connection->BlockedTimings.CongestionControl.LastStartTimeUs != 0) {
+            Stats->ConnBlockedByCongestionControlUs +=
+                CxPlatTimeDiff64(Connection->BlockedTimings.CongestionControl.LastStartTimeUs, Now);
+        }
+        Stats->ConnBlockedByCongestionControlUs -= Stream->BlockedTimings.CachedConnCongestionControlUs;
+        Stats->ConnBlockedByFlowControlUs = Connection->BlockedTimings.FlowControl.CumulativeTimeUs;
+        if (Connection->BlockedTimings.FlowControl.LastStartTimeUs != 0) {
+            Stats->ConnBlockedByFlowControlUs +=
+                CxPlatTimeDiff64(Connection->BlockedTimings.FlowControl.LastStartTimeUs, Now);
+        }
+        Stats->ConnBlockedByFlowControlUs -= Stream->BlockedTimings.CachedConnFlowControlUs;
+
+        *BufferLength = sizeof(QUIC_STREAM_STATISTICS);
+        Status = QUIC_STATUS_SUCCESS;
+        break;
+    }
     default:
         Status = QUIC_STATUS_INVALID_PARAMETER;
         break;

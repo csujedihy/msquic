@@ -165,6 +165,16 @@ InterlockedFetchAndClearPointer(
     _Inout_ _Interlocked_operand_ void* volatile *Target
     );
 
+BOOLEAN
+InterlockedFetchAndClearBoolean(
+    _Inout_ _Interlocked_operand_ BOOLEAN volatile *Target
+    );
+
+BOOLEAN
+InterlockedFetchAndSetBoolean(
+    _Inout_ _Interlocked_operand_ BOOLEAN volatile *Target
+    );
+
 short
 InterlockedIncrement16(
     _Inout_ _Interlocked_operand_ short volatile *Addend
@@ -379,3 +389,71 @@ CxPlatToeplitzHashComputeAddr(
     _Inout_ uint32_t* Key,
     _Out_ uint32_t* Offset
     );
+
+BOOLEAN
+CxPlatEventQInitialize(
+    _Out_ CXPLAT_EVENTQ* queue
+    );
+
+void
+CxPlatEventQCleanup(
+    _In_ CXPLAT_EVENTQ* queue
+    );
+
+#ifdef CXPLAT_SQE
+BOOLEAN
+CxPlatEventQEnqueue(
+    _In_ CXPLAT_EVENTQ* queue,
+    _In_ CXPLAT_SQE* sqe,
+    _In_opt_ void* user_data
+    );
+#else
+BOOLEAN
+_CxPlatEventQEnqueue(
+    _In_ CXPLAT_EVENTQ* queue,
+    _In_opt_ void* user_data
+    );
+#endif
+
+uint32_t
+CxPlatEventQDequeue(
+    _In_ CXPLAT_EVENTQ* queue,
+    _Out_ CXPLAT_CQE* events,
+    _In_ uint32_t count,
+    _In_ uint32_t wait_time // milliseconds
+    );
+
+void
+CxPlatEventQReturn(
+    _In_ CXPLAT_EVENTQ* queue,
+    _In_ uint32_t count
+    );
+
+#ifdef CXPLAT_SQE_INIT
+BOOLEAN
+CxPlatSqeInitialize(
+    _In_ CXPLAT_EVENTQ* queue,
+    _Out_ CXPLAT_SQE* sqe,
+    _In_ void* user_data
+    );
+
+void
+CxPlatSqeCleanup(
+    _In_ CXPLAT_EVENTQ* queue,
+    _In_ CXPLAT_SQE* sqe
+    );
+#endif // CXPLAT_SQE_INIT
+
+void*
+CxPlatCqeUserData(
+    _In_ const CXPLAT_CQE* cqe
+    );
+
+struct clog_param;
+
+char *
+casted_clog_bytearray(const uint8_t * const data, // NOLINT(readability-redundant-declaration)
+                      const size_t len,
+                      struct clog_param ** head);
+
+void clog_stdout(struct clog_param * head, const char * format, ...); // NOLINT(readability-redundant-declaration)

@@ -97,15 +97,15 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathQueryRecvMaxCoalescedSizeFaile
 
 
 /*----------------------------------------------------------
-// Decoder Ring for DatapathMissingInfo
-// [data][%p] WSARecvMsg completion is missing IP_PKTINFO
+// Decoder Ring for DatapathRecvEmpty
+// [data][%p] Dropping datagram with empty payload.
 // QuicTraceLogWarning(
-                DatapathMissingInfo,
-                "[data][%p] WSARecvMsg completion is missing IP_PKTINFO",
+                DatapathRecvEmpty,
+                "[data][%p] Dropping datagram with empty payload.",
                 SocketProc->Parent);
 // arg2 = arg2 = SocketProc->Parent = arg2
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathMissingInfo,
+TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathRecvEmpty,
     TP_ARGS(
         const void *, arg2), 
     TP_FIELDS(
@@ -116,15 +116,15 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathMissingInfo,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for DatapathRecvEmpty
-// [data][%p] Dropping datagram with empty payload.
+// Decoder Ring for DatapathMissingInfo
+// [data][%p] WSARecvMsg completion is missing IP_PKTINFO
 // QuicTraceLogWarning(
-                DatapathRecvEmpty,
-                "[data][%p] Dropping datagram with empty payload.",
+                DatapathMissingInfo,
+                "[data][%p] WSARecvMsg completion is missing IP_PKTINFO",
                 SocketProc->Parent);
 // arg2 = arg2 = SocketProc->Parent = arg2
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathRecvEmpty,
+TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathMissingInfo,
     TP_ARGS(
         const void *, arg2), 
     TP_FIELDS(
@@ -154,15 +154,15 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathUroPreallocExceeded,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for DatapathShutDownReturn
-// [data][%p] Shut down (return)
+// Decoder Ring for DatapathShutDownComplete
+// [data][%p] Shut down (complete)
 // QuicTraceLogVerbose(
-        DatapathShutDownReturn,
-        "[data][%p] Shut down (return)",
-        Socket);
+            DatapathShutDownComplete,
+            "[data][%p] Shut down (complete)",
+            Socket);
 // arg2 = arg2 = Socket = arg2
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathShutDownReturn,
+TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathShutDownComplete,
     TP_ARGS(
         const void *, arg2), 
     TP_FIELDS(
@@ -176,9 +176,9 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathShutDownReturn,
 // Decoder Ring for DatapathSocketContextComplete
 // [data][%p] Socket context shutdown
 // QuicTraceLogVerbose(
-        DatapathSocketContextComplete,
-        "[data][%p] Socket context shutdown",
-        SocketProc);
+            DatapathSocketContextComplete,
+            "[data][%p] Socket context shutdown",
+            SocketProc);
 // arg2 = arg2 = SocketProc = arg2
 ----------------------------------------------------------*/
 TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathSocketContextComplete,
@@ -192,33 +192,14 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathSocketContextComplete,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for DatapathShutDownComplete
-// [data][%p] Shut down (complete)
-// QuicTraceLogVerbose(
-            DatapathShutDownComplete,
-            "[data][%p] Shut down (complete)",
-            SocketProc->Parent);
-// arg2 = arg2 = SocketProc->Parent = arg2
-----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathShutDownComplete,
-    TP_ARGS(
-        const void *, arg2), 
-    TP_FIELDS(
-        ctf_integer_hex(uint64_t, arg2, arg2)
-    )
-)
-
-
-
-/*----------------------------------------------------------
 // Decoder Ring for DatapathUnreachableWithError
 // [data][%p] Received unreachable error (0x%x) from %!ADDR!
 // QuicTraceLogVerbose(
-        DatapathUnreachableWithError,
-        "[data][%p] Received unreachable error (0x%x) from %!ADDR!",
-        SocketProc->Parent,
-        ErrorCode,
-        CASTED_CLOG_BYTEARRAY(sizeof(*RemoteAddr), RemoteAddr));
+                DatapathUnreachableWithError,
+                "[data][%p] Received unreachable error (0x%x) from %!ADDR!",
+                SocketProc->Parent,
+                ErrorCode,
+                CASTED_CLOG_BYTEARRAY(sizeof(*RemoteAddr), RemoteAddr));
 // arg2 = arg2 = SocketProc->Parent = arg2
 // arg3 = arg3 = ErrorCode = arg3
 // arg4 = arg4 = CASTED_CLOG_BYTEARRAY(sizeof(*RemoteAddr), RemoteAddr) = arg4
@@ -259,44 +240,6 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathTooLarge,
         ctf_integer_hex(uint64_t, arg2, arg2)
         ctf_integer(unsigned int, arg3_len, arg3_len)
         ctf_sequence(char, arg3, arg3, unsigned int, arg3_len)
-    )
-)
-
-
-
-/*----------------------------------------------------------
-// Decoder Ring for DatapathWakeupForShutdown
-// [data][%p] Datapath wakeup for shutdown
-// QuicTraceLogVerbose(
-            DatapathWakeupForShutdown,
-            "[data][%p] Datapath wakeup for shutdown",
-            DatapathProc);
-// arg2 = arg2 = DatapathProc = arg2
-----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathWakeupForShutdown,
-    TP_ARGS(
-        const void *, arg2), 
-    TP_FIELDS(
-        ctf_integer_hex(uint64_t, arg2, arg2)
-    )
-)
-
-
-
-/*----------------------------------------------------------
-// Decoder Ring for DatapathWakeupForECTimeout
-// [data][%p] Datapath wakeup for EC wake or timeout
-// QuicTraceLogVerbose(
-            DatapathWakeupForECTimeout,
-            "[data][%p] Datapath wakeup for EC wake or timeout",
-            DatapathProc);
-// arg2 = arg2 = DatapathProc = arg2
-----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathWakeupForECTimeout,
-    TP_ARGS(
-        const void *, arg2), 
-    TP_FIELDS(
-        ctf_integer_hex(uint64_t, arg2, arg2)
     )
 )
 
@@ -391,6 +334,33 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, LibraryError,
 
 
 /*----------------------------------------------------------
+// Decoder Ring for DatapathErrorStatus
+// [data][%p] ERROR, %u, %s.
+// QuicTraceEvent(
+            DatapathErrorStatus,
+            "[data][%p] ERROR, %u, %s.",
+            SocketProc->Parent,
+            LastError,
+            "CxPlatSocketEnqueueSqe");
+// arg2 = arg2 = SocketProc->Parent = arg2
+// arg3 = arg3 = LastError = arg3
+// arg4 = arg4 = "CxPlatSocketEnqueueSqe" = arg4
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathErrorStatus,
+    TP_ARGS(
+        const void *, arg2,
+        unsigned int, arg3,
+        const char *, arg4), 
+    TP_FIELDS(
+        ctf_integer_hex(uint64_t, arg2, arg2)
+        ctf_integer(unsigned int, arg3, arg3)
+        ctf_string(arg4, arg4)
+    )
+)
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for DatapathCreated
 // [data][%p] Created, local=%!ADDR!, remote=%!ADDR!
 // QuicTraceEvent(
@@ -422,39 +392,12 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathCreated,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for DatapathErrorStatus
-// [data][%p] ERROR, %u, %s.
-// QuicTraceEvent(
-                DatapathErrorStatus,
-                "[data][%p] ERROR, %u, %s.",
-                Socket,
-                WsaError,
-                "WSASocketW");
-// arg2 = arg2 = Socket = arg2
-// arg3 = arg3 = WsaError = arg3
-// arg4 = arg4 = "WSASocketW" = arg4
-----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathErrorStatus,
-    TP_ARGS(
-        const void *, arg2,
-        unsigned int, arg3,
-        const char *, arg4), 
-    TP_FIELDS(
-        ctf_integer_hex(uint64_t, arg2, arg2)
-        ctf_integer(unsigned int, arg3, arg3)
-        ctf_string(arg4, arg4)
-    )
-)
-
-
-
-/*----------------------------------------------------------
 // Decoder Ring for DatapathDestroyed
 // [data][%p] Destroyed
 // QuicTraceEvent(
-                    DatapathDestroyed,
-                    "[data][%p] Destroyed",
-                    Socket);
+        DatapathDestroyed,
+        "[data][%p] Destroyed",
+        Socket);
 // arg2 = arg2 = Socket = arg2
 ----------------------------------------------------------*/
 TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathDestroyed,
@@ -516,13 +459,13 @@ TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathRecv,
         SendData->TotalSize,
         SendData->WsaBufferCount,
         SendData->SegmentSize,
-        CASTED_CLOG_BYTEARRAY(sizeof(*RemoteAddress), RemoteAddress),
+        CASTED_CLOG_BYTEARRAY(sizeof(SendData->MappedRemoteAddress), &SendData->MappedRemoteAddress),
         CASTED_CLOG_BYTEARRAY(sizeof(*LocalAddress), LocalAddress));
 // arg2 = arg2 = Socket = arg2
 // arg3 = arg3 = SendData->TotalSize = arg3
 // arg4 = arg4 = SendData->WsaBufferCount = arg4
 // arg5 = arg5 = SendData->SegmentSize = arg5
-// arg6 = arg6 = CASTED_CLOG_BYTEARRAY(sizeof(*RemoteAddress), RemoteAddress) = arg6
+// arg6 = arg6 = CASTED_CLOG_BYTEARRAY(sizeof(SendData->MappedRemoteAddress), &SendData->MappedRemoteAddress) = arg6
 // arg7 = arg7 = CASTED_CLOG_BYTEARRAY(sizeof(*LocalAddress), LocalAddress) = arg7
 ----------------------------------------------------------*/
 TRACEPOINT_EVENT(CLOG_DATAPATH_WINUSER_C, DatapathSend,

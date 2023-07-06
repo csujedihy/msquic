@@ -18,6 +18,7 @@ typedef struct QUIC_CONNECTION_EVENT {
         } CONNECTED;
         struct {
             QUIC_STATUS Status;
+            QUIC_UINT62 ErrorCode; // Wire format error code.
         } SHUTDOWN_INITIATED_BY_TRANSPORT;
         struct {
             QUIC_UINT62 ErrorCode;
@@ -113,6 +114,10 @@ This event is delivered whenever the transport (e.g. QUIC layer) determines the 
 
 The platform status code that indicates the reason for the shutdown.
 
+`ErrorCode`
+
+The wire format error code that indicates the reason for the shutdown.
+
 ## QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER
 
 This event is delivered when the peer application has terminated the application, with an application's protocol specific, 62-bit error code.
@@ -170,6 +175,8 @@ Value | Meaning
 **QUIC_STREAM_OPEN_FLAG_NONE**<br>0 | No special behavior. Defaults to bidirectional stream.
 **QUIC_STREAM_OPEN_FLAG_UNIDIRECTIONAL**<br>1 | A unidirectional stream.
 **QUIC_STREAM_OPEN_FLAG_0_RTT**<br>2 | The stream was received in 0-RTT.
+
+If a server wishes to use `QUIC_STREAM_OPEN_FLAG_DELAY_ID_FC_UPDATES` for the newly started stream, it may append this flag to `Flags` before it returns from the callback.
 
 ## QUIC_CONNECTION_EVENT_STREAMS_AVAILABLE
 

@@ -192,15 +192,15 @@ tracepoint(CLOG_LIBRARY_C, LibrarySetSettings );\
 
 
 /*----------------------------------------------------------
-// Decoder Ring for LibraryDataPathProcsSet
-// [ lib] Setting datapath procs
+// Decoder Ring for LibraryExecutionConfigSet
+// [ lib] Setting execution config
 // QuicTraceLogInfo(
-            LibraryDataPathProcsSet,
-            "[ lib] Setting datapath procs");
+            LibraryExecutionConfigSet,
+            "[ lib] Setting execution config");
 ----------------------------------------------------------*/
-#ifndef _clog_2_ARGS_TRACE_LibraryDataPathProcsSet
-#define _clog_2_ARGS_TRACE_LibraryDataPathProcsSet(uniqueId, encoded_arg_string)\
-tracepoint(CLOG_LIBRARY_C, LibraryDataPathProcsSet );\
+#ifndef _clog_2_ARGS_TRACE_LibraryExecutionConfigSet
+#define _clog_2_ARGS_TRACE_LibraryExecutionConfigSet(uniqueId, encoded_arg_string)\
+tracepoint(CLOG_LIBRARY_C, LibraryExecutionConfigSet );\
 
 #endif
 
@@ -315,6 +315,24 @@ tracepoint(CLOG_LIBRARY_C, LibraryMsQuicClose );\
 #ifndef _clog_2_ARGS_TRACE_LibraryLoadBalancingModeSetAfterInUse
 #define _clog_2_ARGS_TRACE_LibraryLoadBalancingModeSetAfterInUse(uniqueId, encoded_arg_string)\
 tracepoint(CLOG_LIBRARY_C, LibraryLoadBalancingModeSetAfterInUse );\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for PerfCountersRundown
+// [ lib] Perf counters Rundown, Counters=%!CID!
+// QuicTraceEvent(
+        PerfCountersRundown,
+        "[ lib] Perf counters Rundown, Counters=%!CID!",
+        CASTED_CLOG_BYTEARRAY(sizeof(PerfCounterSamples), PerfCounterSamples));
+// arg2 = arg2 = CASTED_CLOG_BYTEARRAY(sizeof(PerfCounterSamples), PerfCounterSamples) = arg2
+----------------------------------------------------------*/
+#ifndef _clog_4_ARGS_TRACE_PerfCountersRundown
+#define _clog_4_ARGS_TRACE_PerfCountersRundown(uniqueId, encoded_arg_string, arg2, arg2_len)\
+tracepoint(CLOG_LIBRARY_C, PerfCountersRundown , arg2_len, arg2);\
 
 #endif
 
@@ -451,13 +469,31 @@ tracepoint(CLOG_LIBRARY_C, LibraryRelease );\
 
 
 /*----------------------------------------------------------
+// Decoder Ring for DataPathInitialized
+// [data] Initialized, DatapathFeatures=%u
+// QuicTraceEvent(
+                DataPathInitialized,
+                "[data] Initialized, DatapathFeatures=%u",
+                CxPlatDataPathGetSupportedFeatures(MsQuicLib.Datapath));
+// arg2 = arg2 = CxPlatDataPathGetSupportedFeatures(MsQuicLib.Datapath) = arg2
+----------------------------------------------------------*/
+#ifndef _clog_3_ARGS_TRACE_DataPathInitialized
+#define _clog_3_ARGS_TRACE_DataPathInitialized(uniqueId, encoded_arg_string, arg2)\
+tracepoint(CLOG_LIBRARY_C, DataPathInitialized , arg2);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for LibraryError
 // [ lib] ERROR, %s.
 // QuicTraceEvent(
-                LibraryError,
-                "[ lib] ERROR, %s.",
-                "Tried to change raw datapath procs after datapath initialization");
-// arg2 = arg2 = "Tried to change raw datapath procs after datapath initialization" = arg2
+            LibraryError,
+            "[ lib] ERROR, %s.",
+            "Only v2 is supported in MsQuicOpenVersion");
+// arg2 = arg2 = "Only v2 is supported in MsQuicOpenVersion" = arg2
 ----------------------------------------------------------*/
 #ifndef _clog_3_ARGS_TRACE_LibraryError
 #define _clog_3_ARGS_TRACE_LibraryError(uniqueId, encoded_arg_string, arg2)\
@@ -552,24 +588,6 @@ tracepoint(CLOG_LIBRARY_C, DataPathRundown , arg2);\
 #ifndef _clog_3_ARGS_TRACE_LibrarySendRetryStateUpdated
 #define _clog_3_ARGS_TRACE_LibrarySendRetryStateUpdated(uniqueId, encoded_arg_string, arg2)\
 tracepoint(CLOG_LIBRARY_C, LibrarySendRetryStateUpdated , arg2);\
-
-#endif
-
-
-
-
-/*----------------------------------------------------------
-// Decoder Ring for PerfCountersRundown
-// [ lib] Perf counters Rundown, Counters=%!CID!
-// QuicTraceEvent(
-            PerfCountersRundown,
-            "[ lib] Perf counters Rundown, Counters=%!CID!",
-            CASTED_CLOG_BYTEARRAY(sizeof(PerfCounters), PerfCounters));
-// arg2 = arg2 = CASTED_CLOG_BYTEARRAY(sizeof(PerfCounters), PerfCounters) = arg2
-----------------------------------------------------------*/
-#ifndef _clog_4_ARGS_TRACE_PerfCountersRundown
-#define _clog_4_ARGS_TRACE_PerfCountersRundown(uniqueId, encoded_arg_string, arg2, arg2_len)\
-tracepoint(CLOG_LIBRARY_C, PerfCountersRundown , arg2_len, arg2);\
 
 #endif
 

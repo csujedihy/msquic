@@ -34,6 +34,7 @@ typedef struct QUIC_SETTINGS_INTERNAL {
             uint64_t PeerUnidiStreamCount                   : 1;
             uint64_t RetryMemoryLimit                       : 1;
             uint64_t LoadBalancingMode                      : 1;
+            uint64_t FixedServerID                          : 1;
             uint64_t MaxOperationsPerDrain                  : 1;
             uint64_t SendBufferingEnabled                   : 1;
             uint64_t PacingEnabled                          : 1;
@@ -49,13 +50,20 @@ typedef struct QUIC_SETTINGS_INTERNAL {
             uint64_t MaxBindingStatelessOperations          : 1;
             uint64_t StatelessOperationExpirationMs         : 1;
             uint64_t CongestionControlAlgorithm             : 1;
-            uint64_t RESERVED                               : 29;
+            uint64_t DestCidUpdateIdleTimeoutMs             : 1;
+            uint64_t GreaseQuicBitEnabled                   : 1;
+            uint64_t EcnEnabled                             : 1;
+            uint64_t HyStartEnabled                         : 1;
+            uint64_t EncryptionOffloadAllowed               : 1;
+            uint64_t RESERVED                               : 23;
         } IsSet;
     };
 
+    QUIC_VERSION_SETTINGS* VersionSettings;
     uint64_t MaxBytesPerKey;
     uint64_t HandshakeIdleTimeoutMs;
     uint64_t IdleTimeoutMs;
+    uint64_t MtuDiscoverySearchCompleteTimeoutUs;
     uint32_t TlsClientMaxSendBuffer;
     uint32_t TlsServerMaxSendBuffer;
     uint32_t StreamRecvWindowDefault;
@@ -69,10 +77,17 @@ typedef struct QUIC_SETTINGS_INTERNAL {
     uint32_t MaxAckDelayMs;
     uint32_t DisconnectTimeoutMs;
     uint32_t KeepAliveIntervalMs;
+    uint32_t DestCidUpdateIdleTimeoutMs;
+    uint32_t FixedServerID;                 // Global only
     uint16_t PeerBidiStreamCount;
     uint16_t PeerUnidiStreamCount;
     uint16_t RetryMemoryLimit;              // Global only
     uint16_t LoadBalancingMode;             // Global only
+    uint16_t MinimumMtu;
+    uint16_t MaximumMtu;
+    uint16_t MaxBindingStatelessOperations;
+    uint16_t StatelessOperationExpirationMs;
+    uint16_t CongestionControlAlgorithm;
     uint8_t MaxOperationsPerDrain;
     uint8_t SendBufferingEnabled            : 1;
     uint8_t PacingEnabled                   : 1;
@@ -80,15 +95,11 @@ typedef struct QUIC_SETTINGS_INTERNAL {
     uint8_t DatagramReceiveEnabled          : 1;
     uint8_t ServerResumptionLevel           : 2;    // QUIC_SERVER_RESUMPTION_LEVEL
     uint8_t VersionNegotiationExtEnabled    : 1;
-    uint8_t RESERVED                        : 1;
-    QUIC_VERSION_SETTINGS* VersionSettings;
-    uint16_t MinimumMtu;
-    uint16_t MaximumMtu;
-    uint64_t MtuDiscoverySearchCompleteTimeoutUs;
+    uint8_t GreaseQuicBitEnabled            : 1;
+    uint8_t EcnEnabled                      : 1;
+    uint8_t HyStartEnabled                  : 1;
+    uint8_t EncryptionOffloadAllowed        : 1;
     uint8_t MtuDiscoveryMissingProbeCount;
-    uint16_t MaxBindingStatelessOperations;
-    uint16_t StatelessOperationExpirationMs;
-    uint16_t CongestionControlAlgorithm;
 
 } QUIC_SETTINGS_INTERNAL;
 
@@ -120,7 +131,7 @@ BOOLEAN
 QuicSettingApply(
     _Inout_ QUIC_SETTINGS_INTERNAL* Destination,
     _In_ BOOLEAN OverWrite,
-    _In_ BOOLEAN AllowMtuChanges,
+    _In_ BOOLEAN AllowMtuAndEcnChanges,
     _In_reads_bytes_(sizeof(QUIC_SETTINGS_INTERNAL))
         const QUIC_SETTINGS_INTERNAL* Source
     );

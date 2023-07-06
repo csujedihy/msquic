@@ -535,6 +535,38 @@
                 value="12"
                 />
           </valueMap>
+          <valueMap name="map_QUIC_EXECUTION_PROFILE">
+            <map
+                message="$(string.Enum.QUIC_EXECUTION_PROFILE.QUIC_EXECUTION_PROFILE_LOW_LATENCY)"
+                value="0"
+                />
+            <map
+                message="$(string.Enum.QUIC_EXECUTION_PROFILE.QUIC_EXECUTION_PROFILE_TYPE_MAX_THROUGHPUT)"
+                value="1"
+                />
+            <map
+                message="$(string.Enum.QUIC_EXECUTION_PROFILE.QUIC_EXECUTION_PROFILE_TYPE_SCAVENGER)"
+                value="2"
+                />
+            <map
+                message="$(string.Enum.QUIC_EXECUTION_PROFILE.QUIC_EXECUTION_PROFILE_TYPE_REAL_TIME)"
+                value="3"
+                />
+          </valueMap>
+          <valueMap name="map_QUIC_CONN_CUBIC_HYSTART_STATE">
+            <map
+                message="$(string.Enum.QUIC_CUBIC_HYSTART_STATE.NOT_STARTED)"
+                value="0"
+                />
+            <map
+                message="$(string.Enum.QUIC_CUBIC_HYSTART_STATE.ACTIVE)"
+                value="1"
+                />
+            <map
+                message="$(string.Enum.QUIC_CUBIC_HYSTART_STATE.DONE)"
+                value="2"
+                />
+          </valueMap>
         </maps>
         <templates>
           <template tid="tid_MESSAGE">
@@ -661,6 +693,21 @@
             <data
                 inType="win:AnsiString"
                 name="AppName"
+                />
+          </template>
+          <template tid="tid_REGISTRATION_STRING_EXEC">
+            <data
+                inType="win:Pointer"
+                name="Registration"
+                />
+            <data
+                inType="win:AnsiString"
+                name="AppName"
+                />
+            <data
+                inType="win:UInt32"
+                map="map_QUIC_EXECUTION_PROFILE"
+                name="ExecProfile"
                 />
           </template>
           <template tid="tid_REGISTRATION_ERROR">
@@ -1147,6 +1194,25 @@
                 name="WindowLastMax"
                 />
           </template>
+          <template tid="tid_CONN_CUBIC_HYSTART">
+            <data
+                inType="win:Pointer"
+                name="Connection"
+                />
+            <data
+                inType="win:UInt32"
+                map="map_QUIC_CONN_CUBIC_HYSTART_STATE"
+                name="HyStartState"
+                />
+            <data
+                inType="win:UInt32"
+                name="CongestionWindow"
+                />
+            <data
+                inType="win:UInt32"
+                name="SlowStartThreshold"
+                />
+          </template>
           <template tid="tid_CONN_LOSS_TIMER">
             <data
                 inType="win:Pointer"
@@ -1228,6 +1294,10 @@
 			<data
                 inType="win:UInt32"
                 name="CongestionWindow"
+                />
+            <data
+                inType="win:AnsiString"
+                name="Cc"
                 />
           </template>
           <template tid="tid_CONN_PACKET_STATISTICS">
@@ -1369,6 +1439,44 @@
             <data
                 inType="win:UInt64"
                 name="Delay"
+                />
+          </template>
+          <template tid="tid_CONN_BBR">
+            <data
+                inType="win:Pointer"
+                name="Connection"
+                />
+            <data
+                inType="win:UInt32"
+                name="BbrState"
+                />
+            <data
+                inType="win:UInt32"
+                name="RecoveryState"
+                />
+            <data
+                inType="win:UInt32"
+                name="CongestionWindow"
+                />
+            <data
+                inType="win:UInt32"
+                name="BytesInFlight"
+                />
+            <data
+                inType="win:UInt32"
+                name="BytesInFlightMax"
+                />
+            <data
+                inType="win:UInt64"
+                name="EstMinRtt"
+                />
+            <data
+                inType="win:UInt64"
+                name="EstBw"
+                />
+            <data
+                inType="win:UInt32"
+                name="IsAppLimited"
                 />
           </template>
           <template tid="tid_STREAM">
@@ -1755,6 +1863,41 @@
                 outType="win:SocketAddress"
                 />
           </template>
+          <template tid="tid_DATA_SEND_TCP_CONTROL">
+            <data
+                inType="win:Pointer"
+                name="UdpBinding"
+                />
+            <data
+                inType="win:UInt32"
+                name="SegmentSize"
+                />
+            <data
+                inType="win:UInt8"
+                name="TcpFlags"
+                outType="win:HexInt8"
+                />
+            <data
+                inType="win:UInt8"
+                name="RemoteAddrLength"
+                />
+            <data
+                inType="win:Binary"
+                length="RemoteAddrLength"
+                name="RemoteAddr"
+                outType="win:SocketAddress"
+                />
+            <data
+                inType="win:UInt8"
+                name="LocalAddrLength"
+                />
+            <data
+                inType="win:Binary"
+                length="LocalAddrLength"
+                name="LocalAddr"
+                outType="win:SocketAddress"
+                />
+          </template>
           <template tid="tid_DATA_SEND_RECV">
             <data
                 inType="win:Pointer"
@@ -1845,6 +1988,48 @@
                 outType="win:SocketAddress"
                 />
           </template>
+          <template tid="tid_UDP_ADDRESSES">
+            <data
+                inType="win:Pointer"
+                name="UdpBinding"
+                />
+            <data
+                inType="win:UInt8"
+                name="LocalAddrLength"
+                />
+            <data
+                inType="win:Binary"
+                length="LocalAddrLength"
+                name="LocalAddr"
+                outType="win:SocketAddress"
+                />
+            <data
+                inType="win:UInt8"
+                name="RemoteAddrLength"
+                />
+            <data
+                inType="win:Binary"
+                length="RemoteAddrLength"
+                name="RemoteAddr"
+                outType="win:SocketAddress"
+                />
+          </template>
+          <template tid="tid_UDP_ADDRESS">
+            <data
+                inType="win:Pointer"
+                name="UdpBinding"
+                />
+            <data
+                inType="win:UInt8"
+                name="LocalAddrLength"
+                />
+            <data
+                inType="win:Binary"
+                length="LocalAddrLength"
+                name="LocalAddr"
+                outType="win:SocketAddress"
+                />
+          </template>
           <template tid="tid_ID">
             <data
                 inType="win:UInt64"
@@ -1859,6 +2044,94 @@
             <data
                 inType="win:UInt64"
                 name="ID2"
+                />
+          </template>
+          <template tid="tid_CONN_ECN_CAPABLE">
+            <data
+                inType="win:Pointer"
+                name="Connection"
+                />
+            <data
+                inType="win:UInt32"
+                name="IsCapable"
+                />
+          </template>
+          <template tid="tid_CONN_ECN_FAILED">
+            <data
+                inType="win:Pointer"
+                name="Connection"
+                />
+            <data
+                inType="win:UInt32"
+                name="EncryptLevel"
+                />
+            <data
+                inType="win:UInt64"
+                name="EcnEctCounter"
+                />
+            <data
+                inType="win:UInt64"
+                name="EcnCeCounter"
+                />
+            <data
+                inType="win:UInt64"
+                name="NumPacketsSentWithEct"
+                />
+            <data
+                inType="win:Int64"
+                name="EctCeDeltaSum"
+                />
+            <data
+                inType="win:UInt8"
+                name="State"
+                />
+          </template>
+          <template tid="tid_CONN_CONGESTION">
+            <data
+                inType="win:Pointer"
+                name="Connection"
+                />
+            <data
+                inType="win:UInt8"
+                name="IsEcn"
+                />
+          </template>
+          <template tid="tid_CONN_STATISTICS_V2">
+            <data
+                inType="win:Pointer"
+                name="Connection"
+                />
+            <data
+                inType="win:UInt32"
+                name="SmoothedRtt"
+                />
+            <data
+                inType="win:UInt32"
+                name="CongestionCount"
+                />
+            <data
+                inType="win:UInt32"
+                name="PersistentCongestionCount"
+                />
+            <data
+                inType="win:UInt64"
+                name="SendTotalBytes"
+                />
+            <data
+                inType="win:UInt64"
+                name="RecvTotalBytes"
+                />
+			<data
+                inType="win:UInt32"
+                name="CongestionWindow"
+                />
+            <data
+                inType="win:AnsiString"
+                name="Cc"
+                />
+            <data
+                inType="win:UInt32"
+                name="EcnCongestionCount"
                 />
           </template>
         </templates>
@@ -2120,6 +2393,24 @@
               symbol="QuicRegistrationShutdown"
               template="tid_REGISTRATION_FLAGS_ERRORCODE"
               value="1030"
+              />
+          <event
+              keywords="ut:Registration ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.RegistrationCreatedV2)"
+              opcode="Registration"
+              symbol="QuicRegistrationCreatedV2"
+              template="tid_REGISTRATION_STRING_EXEC"
+              value="1031"
+              />
+          <event
+              keywords="ut:Registration ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.RegistrationRundownV2)"
+              opcode="Registration"
+              symbol="QuicRegistrationRundownV2"
+              template="tid_REGISTRATION_STRING_EXEC"
+              value="1032"
               />
           <!-- 2048 - 3071 | Worker Events -->
           <event
@@ -2541,8 +2832,8 @@
               value="5143"
               />
           <event
-              keywords="ut:Connection ut:DataFlow"
-              level="win:Verbose"
+              keywords="ut:Connection ut:DataFlow ut:LowVolume"
+              level="win:Informational"
               message="$(string.Etw.CongestionEvent)"
               opcode="Connection"
               symbol="QuicConnCongestion"
@@ -2551,7 +2842,7 @@
               />
           <event
               keywords="ut:Connection ut:DataFlow ut:LowVolume"
-              level="win:Informational"
+              level="win:Error"
               message="$(string.Etw.PersistentCongestionEvent)"
               opcode="Connection"
               symbol="QuicConnPersistentCongestion"
@@ -2631,7 +2922,7 @@
               value="5153"
               />
           <event
-              keywords="ut:Connection ut:Packet"
+              keywords="ut:Connection ut:Packet ut:RPS"
               level="win:Informational"
               message="$(string.Etw.ConnDropPacket)"
               opcode="Connection"
@@ -2640,7 +2931,7 @@
               value="5154"
               />
           <event
-              keywords="ut:Connection ut:Packet"
+              keywords="ut:Connection ut:Packet ut:RPS"
               level="win:Informational"
               message="$(string.Etw.ConnDropPacketEx)"
               opcode="Connection"
@@ -2694,7 +2985,7 @@
               value="5160"
               />
           <event
-              keywords="ut:Connection"
+              keywords="ut:Connection ut:LowVolume"
               level="win:Informational"
               message="$(string.Etw.ConnShutdownComplete)"
               opcode="Connection"
@@ -2740,7 +3031,7 @@
               />
           <event
               keywords="ut:Connection ut:Packet"
-              level="win:Verbose"
+              level="win:Informational"
               message="$(string.Etw.ConnPacketLost)"
               opcode="Connection"
               symbol="QuicConnPacketLost"
@@ -2856,8 +3147,8 @@
               value="5178"
               />
           <event
-              keywords="ut:Connection ut:DataFlow"
-              level="win:Verbose"
+              keywords="ut:Connection ut:DataFlow ut:LowVolume"
+              level="win:Informational"
               message="$(string.Etw.SpuriousCongestionEvent)"
               opcode="Connection"
               symbol="QuicConnSpuriousCongestion"
@@ -2918,6 +3209,60 @@
               template="tid_CONN_TIMER"
               value="5185"
               />
+          <event
+              keywords="ut:Connection ut:DataFlow"
+              level="win:Verbose"
+              message="$(string.Etw.Bbr)"
+              opcode="Connection"
+              symbol="QuicConnBbr"
+              template="tid_CONN_BBR"
+              value="5186"
+              />
+          <event
+              keywords="ut:Connection ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.ConnEcnCapable)"
+              opcode="Connection"
+              symbol="QuicConnEcnCapable"
+              template="tid_CONN_ECN_CAPABLE"
+              value="5187"
+              />
+          <event
+              keywords="ut:Connection ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.ConnEcnFailed)"
+              opcode="Connection"
+              symbol="QuicConnEcnFailed"
+              template="tid_CONN_ECN_FAILED"
+              value="5188"
+              />
+          <event
+              keywords="ut:Connection ut:DataFlow ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.CongestionEventV2)"
+              opcode="Connection"
+              symbol="QuicConnCongestionV2"
+              template="tid_CONN_CONGESTION"
+              value="5189"
+              />
+          <event
+              keywords="ut:Connection ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.ConnStatsV2)"
+              opcode="Connection"
+              symbol="QuicConnStatsV2"
+              template="tid_CONN_STATISTICS_V2"
+              value="5190"
+              />
+          <event
+              keywords="ut:Connection ut:DataFlow"
+              level="win:Informational"
+              message="$(string.Etw.CubicHyStart)"
+              opcode="Connection"
+              symbol="QuicConnHyStartStateChange"
+              template="tid_CONN_CUBIC_HYSTART"
+              value="5191"
+              />
           <!-- 6144 - 7167 | Stream Events -->
           <event
               keywords="ut:Stream ut:LowVolume ut:RPS"
@@ -2956,7 +3301,7 @@
               value="6147"
               />
           <event
-              keywords="ut:Stream ut:LowVolume"
+              keywords="ut:Stream ut:LowVolume ut:RPS"
               level="win:Informational"
               message="$(string.Etw.StreamSendState)"
               opcode="Stream"
@@ -2965,7 +3310,7 @@
               value="6148"
               />
           <event
-              keywords="ut:Stream ut:LowVolume"
+              keywords="ut:Stream ut:LowVolume ut:RPS"
               level="win:Informational"
               message="$(string.Etw.StreamRecvState)"
               opcode="Stream"
@@ -3081,6 +3426,24 @@
               template="tid_STREAM_RECV"
               value="6161"
               />
+          <event
+              keywords="ut:Stream ut:RPS"
+              level="win:Verbose"
+              message="$(string.Etw.StreamReceiveFrameComplete)"
+              opcode="Stream"
+              symbol="QuicStreamReceiveFrameComplete"
+              template="tid_STREAM"
+              value="6162"
+              />
+          <event
+              keywords="ut:Stream ut:RPS"
+              level="win:Verbose"
+              message="$(string.Etw.StreamAppReceiveCompleteCall)"
+              opcode="Stream"
+              symbol="QuicStreamAppReceiveCompleteCall"
+              template="tid_STREAM_U64"
+              value="6163"
+              />
           <!-- 7168 - 8191 | Binding Events -->
           <event
               keywords="ut:Binding ut:LowVolume"
@@ -3119,7 +3482,7 @@
               value="7171"
               />
           <event
-              keywords="ut:Binding ut:Packet"
+              keywords="ut:Binding ut:Packet ut:RPS"
               level="win:Informational"
               message="$(string.Etw.BindingDropPacket)"
               opcode="Binding"
@@ -3128,7 +3491,7 @@
               value="7172"
               />
           <event
-              keywords="ut:Binding ut:Packet"
+              keywords="ut:Binding ut:Packet ut:RPS"
               level="win:Informational"
               message="$(string.Etw.BindingDropPacketEx)"
               opcode="Binding"
@@ -3245,6 +3608,33 @@
               symbol="QuicDatapathDestroyed"
               template="tid_UDP"
               value="9222"
+              />
+          <event
+              keywords="ut:UDP ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.DatapathGetRouteStart)"
+              opcode="Datapath"
+              symbol="QuicDatapathGetRouteStart"
+              template="tid_UDP_ADDRESSES"
+              value="9223"
+              />
+          <event
+              keywords="ut:UDP ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.DatapathGetRouteComplete)"
+              opcode="Datapath"
+              symbol="QuicDatapathGetRouteComplete"
+              template="tid_UDP_ADDRESS"
+              value="9224"
+              />
+          <event
+              keywords="ut:UDP ut:LowVolume"
+              level="win:Informational"
+              message="$(string.Etw.DatapathSendTcpControl)"
+              opcode="Datapath"
+              symbol="QuicDatapathSendTcpControl"
+              template="tid_DATA_SEND_TCP_CONTROL"
+              value="9225"
               />
           <!-- 10240 - 11263 | Logs (not events) -->
           <event
@@ -3467,6 +3857,10 @@
             value="[conn][%1] CUBIC: SlowStartThreshold=%2 K=%3 WindowMax=%4 WindowLastMax=%5"
             />
         <string
+            id="Etw.CubicHyStart"
+            value="[conn][%1] HyStart: State=%2 CongestionWindow=%3 SlowStartThreshold=%4"
+            />
+        <string
             id="Etw.CongestionEvent"
             value="[conn][%1] Congestion event"
             />
@@ -3516,7 +3910,7 @@
             />
         <string
             id="Etw.ConnStats"
-            value="[conn][%1] STATS: SRtt=%2 CongestionCount=%3 PersistentCongestionCount=%4 SendTotalBytes=%5 RecvTotalBytes=%6 CongestionWindow=%7"
+            value="[conn][%1] STATS: SRtt=%2 CongestionCount=%3 PersistentCongestionCount=%4 SendTotalBytes=%5 RecvTotalBytes=%6 CongestionWindow=%7 Cc=%8"
             />
         <string
             id="Etw.ConnPacketStats"
@@ -3560,7 +3954,7 @@
             />
         <string
             id="Etw.ConnVNEOtherVersionList"
-            value="[conn][%1] VerInfo Other Versions List: %3"
+            value="[conn][%1] VerInfo Available Versions List: %3"
             />
         <string
             id="Etw.ConnClientReceivedVersionList"
@@ -3619,12 +4013,20 @@
             value="[strm][%1] Processing frame in packet %2"
             />
         <string
+            id="Etw.StreamReceiveFrameComplete"
+            value="[strm][%1] Done processing frame"
+            />
+        <string
             id="Etw.StreamAppReceive"
             value="[strm][%1] Indicating QUIC_STREAM_EVENT_RECEIVE [%2 bytes, %3 buffers, %4 flags]"
             />
         <string
             id="Etw.StreamAppReceiveComplete"
             value="[strm][%1] Receive complete [%2 bytes]"
+            />
+        <string
+            id="Etw.StreamAppReceiveCompleteCall"
+            value="[strm][%1] Receive complete call [%2 bytes]"
             />
         <string
             id="Etw.StreamAppSend"
@@ -3671,8 +4073,16 @@
             value="[ reg][%1] Created, AppName=%2"
             />
         <string
+            id="Etw.RegistrationCreatedV2"
+            value="[ reg][%1] Created, AppName=%2, ExecProfile=%3"
+            />
+        <string
             id="Etw.RegistrationRundown"
             value="[ reg][%1] Rundown, AppName=%2"
+            />
+        <string
+            id="Etw.RegistrationRundownV2"
+            value="[ reg][%1] Rundown, AppName=%2, ExecProfile=%3"
             />
         <string
             id="Etw.RegistrationDestroyed"
@@ -3873,6 +4283,14 @@
         <string
             id="Etw.DatapathDestroyed"
             value="[data][%1] Destroyed"
+            />
+        <string
+            id="Etw.DatapathGetRouteStart"
+            value="[data][%1] Querying route, local=%3, remote=%5"
+            />
+        <string
+            id="Etw.DatapathGetRouteComplete"
+            value="[data][%1] Query route result: %3"
             />
         <string
             id="Etw.ApiEnter"
@@ -4320,6 +4738,34 @@
             value="SCHEDULING"
             />
         <string
+            id="Enum.QUIC_EXECUTION_PROFILE.QUIC_EXECUTION_PROFILE_LOW_LATENCY"
+            value="LOW_LATENCY"
+            />
+        <string
+            id="Enum.QUIC_EXECUTION_PROFILE.QUIC_EXECUTION_PROFILE_TYPE_MAX_THROUGHPUT"
+            value="MAX_THROUGHPUT"
+            />
+        <string
+            id="Enum.QUIC_EXECUTION_PROFILE.QUIC_EXECUTION_PROFILE_TYPE_SCAVENGER"
+            value="SCAVENGER"
+            />
+        <string
+            id="Enum.QUIC_EXECUTION_PROFILE.QUIC_EXECUTION_PROFILE_TYPE_REAL_TIME"
+            value="REAL_TIME"
+            />
+        <string
+            id="Enum.QUIC_CUBIC_HYSTART_STATE.NOT_STARTED"
+            value="NotStarted"
+            />
+        <string
+            id="Enum.QUIC_CUBIC_HYSTART_STATE.ACTIVE"
+            value="Active"
+            />
+        <string
+            id="Enum.QUIC_CUBIC_HYSTART_STATE.DONE"
+            value="Done"
+            />
+        <string
             id="Etw.ConnNoListenerIp"
             value="[conn][%1] No Listener for IP address: %3"
             />
@@ -4342,6 +4788,30 @@
         <string
             id="Etw.ConnExpiredTimer"
             value="[conn][%1] %2 expired"
+            />
+        <string
+            id="Etw.Bbr"
+            value="[conn][%1] BBR: State=%2 RState=%3 CongestionWindow=%4 BytesInFlight=%5 BytesInFlightMax=%6 MinRttEst=%7 EstBw=%8 AppLimited=%9"
+            />
+        <string
+            id="Etw.ConnEcnCapable"
+            value="[conn][%1] Ecn: IsCapable=%2"
+            />
+        <string
+            id="Etw.ConnEcnFailed"
+            value="[conn][%1][%2] ECN failed: EctCnt %3 CeCnt %4 TxEct %5 DeltaSum %6 State %7"
+            />
+        <string
+            id="Etw.CongestionEventV2"
+            value="[conn][%1] Congestion event IsEcn=%2"
+            />
+        <string
+            id="Etw.ConnStatsV2"
+            value="[conn][%1] STATS: SRtt=%2 CongestionCount=%3 PersistentCongestionCount=%4 SendTotalBytes=%5 RecvTotalBytes=%6 CongestionWindow=%7 Cc=%8 EcnCongestionCount=%8"
+            />
+        <string
+            id="Etw.DatapathSendTcpControl"
+            value="[data][%1] Send %2 bytes TCP control packet Flags=%3 Dst=%5 Src=%7"
             />
       </stringTable>
     </resources>

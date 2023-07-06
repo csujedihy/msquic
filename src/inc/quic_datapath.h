@@ -37,6 +37,11 @@ extern "C" {
 #define CXPLAT_UDP_HEADER_SIZE 8
 
 //
+// The number of bytes in a TCP header.
+//
+#define CXPLAT_TCP_HEADER_SIZE 20
+
+//
 // Different types of Explicit Congestion Notifications
 //
 typedef enum CXPLAT_ECN_TYPE {
@@ -148,10 +153,24 @@ typedef enum CXPLAT_ROUTE_STATE {
     RouteResolved,
 } CXPLAT_ROUTE_STATE;
 
+typedef struct CXPLAT_RAW_TCP_STATE {
+    BOOLEAN Syncd;
+    //
+    // All numbers are in host order.
+    //
+    uint32_t AckNumber;
+    uint32_t SequenceNumber;
+} CXPLAT_RAW_TCP_STATE;
+
 //
 // Structure to represent a network route.
 //
 typedef struct CXPLAT_ROUTE {
+
+    //
+    // The (RSS) queue that this route is primarily associated with.
+    //
+    void* Queue;
 
     QUIC_ADDR RemoteAddress;
     QUIC_ADDR LocalAddress;
@@ -159,9 +178,13 @@ typedef struct CXPLAT_ROUTE {
 #ifdef QUIC_USE_RAW_DATAPATH
     uint8_t LocalLinkLayerAddress[6];
     uint8_t NextHopLinkLayerAddress[6];
-    void* Queue;
 
-    CXPLAT_ROUTE_STATE State; // Keep this as the last property in the struct.
+    //
+    // QuicCopyRouteInfo copies memory up to this point (not including State).
+    //
+
+    CXPLAT_ROUTE_STATE State;
+    CXPLAT_RAW_TCP_STATE TcpState;
 #endif // QUIC_USE_RAW_DATAPATH
 
 } CXPLAT_ROUTE;
@@ -206,11 +229,54 @@ typedef struct CXPLAT_RECV_DATA {
     //
     // Flags.
     //
-    uint8_t Allocated : 1;          // Used for debugging. Set to FALSE on free.
-    uint8_t QueuedOnConnection : 1; // Used for debugging.
-    uint8_t Reserved : 6;
+    uint16_t Allocated : 1;          // Used for debugging. Set to FALSE on free.
+    uint16_t QueuedOnConnection : 1; // Used for debugging.
+    uint16_t Reserved : 6;
+    uint16_t ReservedEx : 8;
 
 } CXPLAT_RECV_DATA;
+
+//
+// QUIC Encryption Offload (QEO) interfaces
+//
+
+typedef enum CXPLAT_QEO_OPERATION {
+    CXPLAT_QEO_OPERATION_ADD,     // Add (or modify) a QUIC connection offload
+    CXPLAT_QEO_OPERATION_REMOVE,  // Remove a QUIC connection offload
+} CXPLAT_QEO_OPERATION;
+
+typedef enum CXPLAT_QEO_DIRECTION {
+    CXPLAT_QEO_DIRECTION_TRANSMIT, // An offload for the transmit path
+    CXPLAT_QEO_DIRECTION_RECEIVE,  // An offload for the receive path
+} CXPLAT_QEO_DIRECTION;
+
+typedef enum CXPLAT_QEO_DECRYPT_FAILURE_ACTION {
+    CXPLAT_QEO_DECRYPT_FAILURE_ACTION_DROP,     // Drop the packet on decryption failure
+    CXPLAT_QEO_DECRYPT_FAILURE_ACTION_CONTINUE, // Continue and pass the packet up on decryption failure
+} CXPLAT_QEO_DECRYPT_FAILURE_ACTION;
+
+typedef enum CXPLAT_QEO_CIPHER_TYPE {
+    CXPLAT_QEO_CIPHER_TYPE_AEAD_AES_128_GCM,
+    CXPLAT_QEO_CIPHER_TYPE_AEAD_AES_256_GCM,
+    CXPLAT_QEO_CIPHER_TYPE_AEAD_CHACHA20_POLY1305,
+    CXPLAT_QEO_CIPHER_TYPE_AEAD_AES_128_CCM,
+} CXPLAT_QEO_CIPHER_TYPE;
+
+typedef struct CXPLAT_QEO_CONNECTION {
+    uint32_t Operation            : 1;  // CXPLAT_QEO_OPERATION
+    uint32_t Direction            : 1;  // CXPLAT_QEO_DIRECTION
+    uint32_t DecryptFailureAction : 1;  // CXPLAT_QEO_DECRYPT_FAILURE_ACTION
+    uint32_t KeyPhase             : 1;
+    uint32_t RESERVED             : 12; // Must be set to 0. Don't read.
+    uint32_t CipherType           : 16; // CXPLAT_QEO_CIPHER_TYPE
+    uint64_t NextPacketNumber;
+    QUIC_ADDR Address;
+    uint8_t ConnectionIdLength;
+    uint8_t ConnectionId[20]; // QUIC v1 and v2 max CID size
+    uint8_t PayloadKey[32];   // Length determined by CipherType
+    uint8_t HeaderKey[32];    // Length determined by CipherType
+    uint8_t PayloadIv[12];
+} CXPLAT_QEO_CONNECTION;
 
 //
 // Gets the corresponding receive data from its context pointer.
@@ -343,11 +409,6 @@ void
 
 typedef CXPLAT_DATAPATH_SEND_COMPLETE *CXPLAT_DATAPATH_SEND_COMPLETE_HANDLER;
 
-typedef struct CXPLAT_DATAPATH_CONFIG {
-    const uint16_t* DataPathProcList; // Processor index candidates
-    uint32_t DataPathProcListLength;
-} CXPLAT_DATAPATH_CONFIG;
-
 //
 // Opens a new handle to the QUIC datapath.
 //
@@ -357,7 +418,7 @@ CxPlatDataPathInitialize(
     _In_ uint32_t ClientRecvContextLength,
     _In_opt_ const CXPLAT_UDP_DATAPATH_CALLBACKS* UdpCallbacks,
     _In_opt_ const CXPLAT_TCP_DATAPATH_CALLBACKS* TcpCallbacks,
-    _In_opt_ CXPLAT_DATAPATH_CONFIG* Config,
+    _In_opt_ QUIC_EXECUTION_CONFIG* Config,
     _Out_ CXPLAT_DATAPATH** NewDatapath
     );
 
@@ -367,13 +428,24 @@ CxPlatDataPathInitialize(
 _IRQL_requires_max_(PASSIVE_LEVEL)
 void
 CxPlatDataPathUninitialize(
-    _In_ CXPLAT_DATAPATH* datapath
+    _In_ CXPLAT_DATAPATH* Datapath
+    );
+
+//
+// Updates the execution configuration of a datapath.
+//
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDataPathUpdateConfig(
+    _In_ CXPLAT_DATAPATH* Datapath,
+    _In_ QUIC_EXECUTION_CONFIG* Config
     );
 
 #define CXPLAT_DATAPATH_FEATURE_RECV_SIDE_SCALING     0x0001
 #define CXPLAT_DATAPATH_FEATURE_RECV_COALESCING       0x0002
 #define CXPLAT_DATAPATH_FEATURE_SEND_SEGMENTATION     0x0004
 #define CXPLAT_DATAPATH_FEATURE_LOCAL_PORT_SHARING    0x0008
+#define CXPLAT_DATAPATH_FEATURE_PORT_RESERVATIONS     0x0010
 
 //
 // Queries the currently supported features of the datapath.
@@ -533,6 +605,18 @@ CxPlatSocketDelete(
     );
 
 //
+// Plumbs new or removes existing QUIC encryption offload information.
+//
+_IRQL_requires_max_(PASSIVE_LEVEL)
+QUIC_STATUS
+CxPlatSocketUpdateQeo(
+    _In_ CXPLAT_SOCKET* Socket,
+    _In_reads_(OffloadCount)
+        const CXPLAT_QEO_CONNECTION* Offloads,
+    _In_ uint32_t OffloadCount
+    );
+
+//
 // Queries the locally bound interface's MTU.
 //
 _IRQL_requires_max_(DISPATCH_LEVEL)
@@ -572,6 +656,18 @@ CxPlatRecvDataReturn(
     _In_opt_ CXPLAT_RECV_DATA* RecvDataChain
     );
 
+typedef enum CXPLAT_SEND_FLAGS {
+    CXPLAT_SEND_FLAGS_NONE = 0,
+    CXPLAT_SEND_FLAGS_MAX_THROUGHPUT = 1,
+} CXPLAT_SEND_FLAGS;
+
+typedef struct CXPLAT_SEND_CONFIG {
+    CXPLAT_ROUTE* Route;
+    uint16_t MaxPacketSize;
+    uint8_t ECN; // CXPLAT_ECN_TYPE
+    uint8_t Flags; // CXPLAT_SEND_FLAGS
+} CXPLAT_SEND_CONFIG;
+
 //
 // Allocates a new send context to be used to call QuicSocketSend. It
 // can be freed with QuicSendDataFree too.
@@ -581,9 +677,7 @@ _Success_(return != NULL)
 CXPLAT_SEND_DATA*
 CxPlatSendDataAlloc(
     _In_ CXPLAT_SOCKET* Socket,
-    _In_ CXPLAT_ECN_TYPE ECN,
-    _In_ uint16_t MaxPacketSize,
-    _Inout_ CXPLAT_ROUTE* Route
+    _Inout_ CXPLAT_SEND_CONFIG* Config
     );
 
 //
@@ -633,32 +727,7 @@ QUIC_STATUS
 CxPlatSocketSend(
     _In_ CXPLAT_SOCKET* Socket,
     _In_ const CXPLAT_ROUTE* Route,
-    _In_ CXPLAT_SEND_DATA* SendData,
-    _In_ uint16_t PartitionId
-    );
-
-//
-// Sets a parameter on the socket.
-//
-_IRQL_requires_max_(PASSIVE_LEVEL)
-QUIC_STATUS
-CxPlatSocketSetParam(
-    _In_ CXPLAT_SOCKET* Socket,
-    _In_ uint32_t Param,
-    _In_ uint32_t BufferLength,
-    _In_reads_bytes_(BufferLength) const uint8_t* Buffer
-    );
-
-//
-// Sets a parameter on the socket.
-//
-_IRQL_requires_max_(PASSIVE_LEVEL)
-QUIC_STATUS
-CxPlatSocketGetParam(
-    _In_ CXPLAT_SOCKET* Socket,
-    _In_ uint32_t Param,
-    _Inout_ uint32_t* BufferLength,
-    _Out_writes_bytes_opt_(*BufferLength) uint8_t* Buffer
+    _In_ CXPLAT_SEND_DATA* SendData
     );
 
 #ifdef QUIC_USE_RAW_DATAPATH
@@ -703,6 +772,14 @@ CxPlatResolveRoute(
     _In_ void* Context,
     _In_ CXPLAT_ROUTE_RESOLUTION_CALLBACK_HANDLER Callback
     );
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatUpdateRoute(
+    _Inout_ CXPLAT_ROUTE* DstRoute,
+    _In_ CXPLAT_ROUTE* SrcRoute
+    );
+
 #endif // QUIC_USE_RAW_DATAPATH
 
 #if defined(__cplusplus)

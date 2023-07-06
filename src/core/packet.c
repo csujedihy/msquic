@@ -20,8 +20,8 @@ Abstract:
 //
 const QUIC_VERSION_INFO QuicSupportedVersionList[] = {
     { QUIC_VERSION_2,
-      { 0xa7, 0x07, 0xc2, 0x03, 0xa5, 0x9b, 0x47, 0x18, 0x4a, 0x1d,
-        0x62, 0xca, 0x57, 0x04, 0x06, 0xea, 0x7a, 0xe3, 0xe5, 0xd3 },
+      { 0x0d, 0xed, 0xe3, 0xde, 0xf7, 0x00, 0xa6, 0xdb, 0x81, 0x93,
+        0x81, 0xbe, 0x6e, 0x26, 0x9d, 0xcb, 0xf9, 0xbd, 0x2e, 0xd9 },
       { 0x34, 0x25, 0xc2, 0x0c, 0xf8, 0x87, 0x79, 0xdf, 0x2f, 0xf7, 0x1e, 0x8a, 0xbf, 0xa7, 0x82, 0x49,
         0x89, 0x1e, 0x76, 0x3b, 0xbe, 0xd2, 0xf1, 0x3c, 0x04, 0x83, 0x43, 0xd3, 0x48, 0xc0, 0x60, 0xe2 },
       { "quicv2 key", "quicv2 iv", "quicv2 hp", "quicv2 ku" } },
@@ -211,7 +211,8 @@ QuicPacketValidateLongHeaderV1(
     _Inout_ CXPLAT_RECV_PACKET* Packet,
     _Outptr_result_buffer_maybenull_(*TokenLength)
         const uint8_t** Token,
-    _Out_ uint16_t* TokenLength
+    _Out_ uint16_t* TokenLength,
+    _In_ BOOLEAN IgnoreFixedBit
     )
 {
     //
@@ -241,9 +242,9 @@ QuicPacketValidateLongHeaderV1(
     }
 
     //
-    // Check the Fixed bit to ensure it is set to 1.
+    // Check the Fixed bit to ensure it is set to 1, unless we ignore it.
     //
-    if (Packet->LH->FixedBit == 0) {
+    if (IgnoreFixedBit == FALSE && Packet->LH->FixedBit == 0) {
         QuicPacketLogDrop(Owner, Packet, "Invalid LH FixedBit bits values");
         return FALSE;
     }
@@ -565,7 +566,8 @@ _Success_(return != FALSE)
 BOOLEAN
 QuicPacketValidateShortHeaderV1(
     _In_ const void* Owner, // Binding or Connection depending on state
-    _Inout_ CXPLAT_RECV_PACKET* Packet
+    _Inout_ CXPLAT_RECV_PACKET* Packet,
+    _In_ BOOLEAN IgnoreFixedBit
     )
 {
     //
@@ -577,9 +579,9 @@ QuicPacketValidateShortHeaderV1(
     CXPLAT_DBG_ASSERT(Packet->BufferLength >= Packet->HeaderLength);
 
     //
-    // Check the Fixed bit to ensure it is set to 1.
+    // Check the Fixed bit to ensure it is set to 1, unless we ignore it.
     //
-    if (Packet->SH->FixedBit == 0) {
+    if (IgnoreFixedBit == FALSE && Packet->SH->FixedBit == 0) {
         QuicPacketLogDrop(Owner, Packet, "Invalid SH FixedBit bits values");
         return FALSE;
     }
@@ -696,7 +698,7 @@ QuicPacketLogHeader(
                 }
                 Offset += (uint16_t)TokenLength;
 
-            } else if ((LongHdr->Version != QUIC_VERSION_2 && LongHdr->Type == QUIC_RETRY_V1) || 
+            } else if ((LongHdr->Version != QUIC_VERSION_2 && LongHdr->Type == QUIC_RETRY_V1) ||
                 (LongHdr->Version == QUIC_VERSION_2 && LongHdr->Type == QUIC_RETRY_V2)) {
 
                 QuicTraceLogVerbose(

@@ -5,17 +5,48 @@
 
 --*/
 
+#include "bbr.h"
 #include "cubic.h"
 
 typedef struct QUIC_ACK_EVENT {
 
     uint64_t TimeNow; // microsecond
 
-    uint64_t LargestPacketNumberAcked;
+    uint64_t LargestAck;
+
+    uint64_t LargestSentPacketNumber;
+
+    //
+    // Number of retransmittable bytes acked during the connection's lifetime
+    //
+    uint64_t NumTotalAckedRetransmittableBytes;
+
+    QUIC_SENT_PACKET_METADATA* AckedPackets;
 
     uint32_t NumRetransmittableBytes;
 
+    //
+    // Connection's current SmoothedRtt.
+    //
     uint32_t SmoothedRtt;
+
+    //
+    // The smallest calculated RTT of the packets that were just ACKed.
+    //
+    uint32_t MinRtt;
+
+    //
+    // Acked time minus ack delay.
+    //
+    uint32_t AdjustedAckTime;
+
+    BOOLEAN IsImplicit : 1;
+
+    BOOLEAN HasLoss : 1;
+
+    BOOLEAN IsLargestAckedPacketAppLimited : 1;
+
+    BOOLEAN MinRttValid : 1;
 
 } QUIC_ACK_EVENT;
 
@@ -23,13 +54,21 @@ typedef struct QUIC_LOSS_EVENT {
 
     uint64_t LargestPacketNumberLost;
 
-    uint64_t LargestPacketNumberSent;
+    uint64_t LargestSentPacketNumber;
 
     uint32_t NumRetransmittableBytes;
 
     BOOLEAN PersistentCongestion : 1;
 
 } QUIC_LOSS_EVENT;
+
+typedef struct QUIC_ECN_EVENT {
+
+    uint64_t LargestPacketNumberAcked;
+
+    uint64_t LargestSentPacketNumber;
+
+} QUIC_ECN_EVENT;
 
 typedef struct QUIC_CONGESTION_CONTROL {
 
@@ -78,6 +117,11 @@ typedef struct QUIC_CONGESTION_CONTROL {
         _In_ const QUIC_LOSS_EVENT* LossEvent
         );
 
+    void (*QuicCongestionControlOnEcn)(
+        _In_ struct QUIC_CONGESTION_CONTROL* Cc,
+        _In_ const QUIC_ECN_EVENT* LossEvent
+        );
+
     BOOLEAN (*QuicCongestionControlOnSpuriousCongestionEvent)(
         _In_ struct QUIC_CONGESTION_CONTROL* Cc
         );
@@ -98,11 +142,20 @@ typedef struct QUIC_CONGESTION_CONTROL {
         _In_ const struct QUIC_CONGESTION_CONTROL* Cc
         );
 
+    BOOLEAN (*QuicCongestionControlIsAppLimited)(
+        _In_ const struct QUIC_CONGESTION_CONTROL* Cc
+        );
+
+    void (*QuicCongestionControlSetAppLimited)(
+        _In_ struct QUIC_CONGESTION_CONTROL* Cc
+        );
+
     //
     // Algorithm specific state.
     //
     union {
         QUIC_CONGESTION_CONTROL_CUBIC Cubic;
+        QUIC_CONGESTION_CONTROL_BBR Bbr;
     };
 
 } QUIC_CONGESTION_CONTROL;
@@ -225,6 +278,22 @@ QuicCongestionControlOnDataLost(
 }
 
 //
+// Called when congestion is signaled by ECN.
+//
+_IRQL_requires_max_(DISPATCH_LEVEL)
+inline
+void
+QuicCongestionControlOnEcn(
+    _In_ QUIC_CONGESTION_CONTROL* Cc,
+    _In_ const QUIC_ECN_EVENT* EcnEvent
+    )
+{
+    if (Cc->QuicCongestionControlOnEcn) {
+        Cc->QuicCongestionControlOnEcn(Cc, EcnEvent);
+    }
+}
+
+//
 // Called when all recently considered lost data was actually acknowledged.
 //
 _IRQL_requires_max_(DISPATCH_LEVEL)
@@ -275,4 +344,24 @@ QuicCongestionControlGetCongestionWindow(
     )
 {
     return Cc->QuicCongestionControlGetCongestionWindow(Cc);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+inline
+BOOLEAN
+QuicCongestionControlIsAppLimited(
+    _In_ struct QUIC_CONGESTION_CONTROL* Cc
+    )
+{
+    return Cc->QuicCongestionControlIsAppLimited(Cc);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+inline
+void
+QuicCongestionControlSetAppLimited(
+    _In_ struct QUIC_CONGESTION_CONTROL* Cc
+    )
+{
+    Cc->QuicCongestionControlSetAppLimited(Cc);
 }

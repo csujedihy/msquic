@@ -9,6 +9,7 @@
 *.user
 *.userosscache
 *.sln.docstates
+.clang-format
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -373,3 +374,6 @@ target/
 
 # Cargo (Rust) lock file
 Cargo.lock
+
+# IntelliJ project files
+.idea/

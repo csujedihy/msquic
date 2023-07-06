@@ -61,6 +61,8 @@ namespace QuicTrace.DataModel
         RegistrationError,
         RegistrationErrorStatus,
         RegistrationShutdown,
+        RegistrationCreatedV2,
+        RegistrationRundownV2,
 
         WorkerCreated = 2048,
         WorkerStart,
@@ -153,6 +155,11 @@ namespace QuicTrace.DataModel
         ConnTimerSet,
         ConnTimerCancel,
         ConnTimerExpire,
+        ConnBbr,
+        ConnEcnCapable,
+        ConnEcnFailed,
+        ConnCongestionV2,
+        ConnStatsV2,
 
         StreamCreated = 6144,
         StreamDestroyed,
@@ -172,6 +179,8 @@ namespace QuicTrace.DataModel
         StreamAppReceive,
         StreamAppReceiveComplete,
         StreamAppSend,
+        StreamReceiveFrameComplete,
+        StreamAppReceiveCompleteCall,
 
         BindingCreated = 7168,
         BindingRundown,
@@ -187,7 +196,8 @@ namespace QuicTrace.DataModel
         TlsErrorStatus,
         TlsMessage,
 
-        DatapathSend = 9217,
+        Temporal = 9216, // Temporary, while there are still builds out there generating this old event
+        DatapathSend,
         DatapathRecv,
         DatapathError,
         DatapathErrorStatus,

@@ -106,11 +106,12 @@ typedef struct QUIC_SEND_REQUEST {
 // Note - Keep quictypes.h's copy up to date.
 //
 typedef union QUIC_STREAM_FLAGS {
-    uint32_t AllFlags;
+    uint64_t AllFlags;
     struct {
         BOOLEAN Allocated               : 1;    // Allocated by Connection. Used for Debugging.
         BOOLEAN Initialized             : 1;    // Initialized successfully. Used for Debugging.
         BOOLEAN Started                 : 1;    // The app has started the stream.
+        BOOLEAN StartedIndicated        : 1;    // The app received a start complete event.
         BOOLEAN Unidirectional          : 1;    // Sends/receives in 1 direction only.
         BOOLEAN Opened0Rtt              : 1;    // A 0-RTT packet opened the stream.
         BOOLEAN IndicatePeerAccepted    : 1;    // The app requested the PEER_ACCEPTED event.
@@ -138,6 +139,7 @@ typedef union QUIC_STREAM_FLAGS {
         BOOLEAN ReceiveFlushQueued      : 1;    // The receive flush operation is queued.
         BOOLEAN ReceiveDataPending      : 1;    // Data (or FIN) is queued and ready for delivery.
         BOOLEAN ReceiveCallPending      : 1;    // There is an uncompleted receive to the app.
+        BOOLEAN ReceiveCallActive       : 1;    // There is an active receive to the app.
         BOOLEAN SendDelayed             : 1;    // A delayed send is currently queued.
 
         BOOLEAN HandleSendShutdown      : 1;    // Send shutdown complete callback delivered.
@@ -147,8 +149,15 @@ typedef union QUIC_STREAM_FLAGS {
         BOOLEAN ShutdownComplete        : 1;    // Both directions have been shutdown and acknowledged.
         BOOLEAN Uninitialized           : 1;    // Uninitialize started/completed. Used for Debugging.
         BOOLEAN Freed                   : 1;    // Freed after last ref count released. Used for Debugging.
+
+        BOOLEAN InStreamTable           : 1;    // The stream is currently in the connection's table.
+        BOOLEAN DelayIdFcUpdate         : 1;    // Delay stream ID FC updates to StreamClose.
     };
 } QUIC_STREAM_FLAGS;
+
+CXPLAT_STATIC_ASSERT(
+    sizeof(QUIC_STREAM_FLAGS) == sizeof(uint64_t),
+    "QUIC_STREAM_FLAGS AllFlags size is mismatched.");
 
 typedef enum QUIC_STREAM_SEND_STATE {
     QUIC_STREAM_SEND_DISABLED,
@@ -392,6 +401,12 @@ typedef struct QUIC_STREAM {
     uint64_t RecvPendingLength;
 
     //
+    // The length of any inline receive complete call by the app. UINT64_MAX
+    // indicates that no inline call was made.
+    //
+    uint64_t RecvInlineCompletionLength;
+
+    //
     // The error code for why the receive path was shutdown.
     //
     QUIC_VAR_INT RecvShutdownErrorCode;
@@ -406,6 +421,19 @@ typedef struct QUIC_STREAM {
     //
     QUIC_OPERATION* ReceiveCompleteOperation;
 
+    //
+    // Stream blocked timings.
+    //
+    struct {
+        QUIC_FLOW_BLOCKED_TIMING_TRACKER StreamIdFlowControl;
+        QUIC_FLOW_BLOCKED_TIMING_TRACKER FlowControl;
+        QUIC_FLOW_BLOCKED_TIMING_TRACKER App;
+        uint64_t CachedConnSchedulingUs;
+        uint64_t CachedConnPacingUs;
+        uint64_t CachedConnAmplificationProtUs;
+        uint64_t CachedConnCongestionControlUs;
+        uint64_t CachedConnFlowControlUs;
+    } BlockedTimings;
 } QUIC_STREAM;
 
 inline
@@ -461,6 +489,15 @@ QuicStreamCanSendNow(
     _In_ BOOLEAN ZeroRtt
     );
 
+//
+// Returns TRUE if the peer has indicated the stream ID is allowed to be used
+// yet.
+//
+BOOLEAN
+QuicStreamAllowedByPeer(
+    _In_ const QUIC_STREAM* Stream
+    );
+
 inline
 uint64_t
 QuicStreamGetInitialMaxDataFromTP(
@@ -494,8 +531,7 @@ QUIC_STATUS
 QuicStreamInitialize(
     _In_ QUIC_CONNECTION* Connection,
     _In_ BOOLEAN OpenedRemotely,
-    _In_ BOOLEAN Unidirectional,
-    _In_ BOOLEAN Opened0Rtt,
+    _In_ QUIC_STREAM_OPEN_FLAGS Flags,
     _Outptr_ _At_(*Stream, __drv_allocatesMem(Mem))
         QUIC_STREAM** Stream
     );
@@ -708,7 +744,20 @@ QuicStreamAddOutFlowBlockedReason(
     _In_ QUIC_FLOW_BLOCK_REASON Reason
     )
 {
+    CXPLAT_DBG_ASSERT((Reason & QUIC_FLOW_BLOCKED_STREAM_ID_FLOW_CONTROL) == 0);
+    CXPLAT_DBG_ASSERTMSG(
+        (Reason & (Reason - 1)) == 0,
+        "More than one reason is not allowed");
     if (!(Stream->OutFlowBlockedReasons & Reason)) {
+        uint64_t Now = CxPlatTimeUs64();
+        if (Reason & QUIC_FLOW_BLOCKED_STREAM_FLOW_CONTROL) {
+            Stream->BlockedTimings.FlowControl.LastStartTimeUs = Now;
+        }
+
+        if (Reason & QUIC_FLOW_BLOCKED_APP) {
+            Stream->BlockedTimings.App.LastStartTimeUs = Now;
+        }
+
         Stream->OutFlowBlockedReasons |= Reason;
         QuicTraceEvent(
             StreamOutFlowBlocked,
@@ -728,6 +777,31 @@ QuicStreamRemoveOutFlowBlockedReason(
     )
 {
     if ((Stream->OutFlowBlockedReasons & Reason)) {
+        uint64_t Now = CxPlatTimeUs64();
+        if ((Stream->OutFlowBlockedReasons & QUIC_FLOW_BLOCKED_STREAM_FLOW_CONTROL) &&
+            (Reason & QUIC_FLOW_BLOCKED_STREAM_FLOW_CONTROL)) {
+            Stream->BlockedTimings.FlowControl.CumulativeTimeUs +=
+                CxPlatTimeDiff64(
+                    Stream->BlockedTimings.FlowControl.LastStartTimeUs, Now);
+            Stream->BlockedTimings.FlowControl.LastStartTimeUs = 0;
+        }
+
+        if ((Stream->OutFlowBlockedReasons & QUIC_FLOW_BLOCKED_APP) &&
+            (Reason & QUIC_FLOW_BLOCKED_APP)) {
+            Stream->BlockedTimings.App.CumulativeTimeUs +=
+                CxPlatTimeDiff64(
+                    Stream->BlockedTimings.App.LastStartTimeUs, Now);
+            Stream->BlockedTimings.App.LastStartTimeUs = 0;
+        }
+
+        if ((Stream->OutFlowBlockedReasons & QUIC_FLOW_BLOCKED_STREAM_ID_FLOW_CONTROL) &&
+            (Reason & QUIC_FLOW_BLOCKED_STREAM_ID_FLOW_CONTROL)) {
+            Stream->BlockedTimings.StreamIdFlowControl.CumulativeTimeUs +=
+                CxPlatTimeDiff64(
+                    Stream->BlockedTimings.StreamIdFlowControl.LastStartTimeUs, Now);
+            Stream->BlockedTimings.StreamIdFlowControl.LastStartTimeUs = 0;
+        }
+
         Stream->OutFlowBlockedReasons &= ~Reason;
         QuicTraceEvent(
             StreamOutFlowBlocked,
@@ -854,6 +928,16 @@ QuicStreamRecvShutdown(
 _IRQL_requires_max_(PASSIVE_LEVEL)
 void
 QuicStreamReceiveCompletePending(
+    _In_ QUIC_STREAM* Stream,
+    _In_ uint64_t BufferLength
+    );
+
+//
+// Completes a receive call inline from a callback.
+//
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+QuicStreamReceiveCompleteInline(
     _In_ QUIC_STREAM* Stream,
     _In_ uint64_t BufferLength
     );

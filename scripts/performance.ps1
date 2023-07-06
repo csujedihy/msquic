@@ -77,7 +77,7 @@ param (
     [string]$LocalArch = "x64",
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("schannel", "openssl")]
+    [ValidateSet("schannel", "openssl", "openssl3")]
     [string]$LocalTls = "",
 
     [Parameter(Mandatory = $false)]
@@ -88,14 +88,14 @@ param (
     [string]$ExtraArtifactDir = "",
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("schannel", "openssl")]
+    [ValidateSet("schannel", "openssl", "openssl3")]
     [string]$RemoteTls = "",
 
     [Parameter(Mandatory = $false)]
     [string]$ComputerName = "quic-server",
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("Basic.Light", "Datapath.Light", "Datapath.Verbose", "Stacks.Light", "RPS.Light", "Performance.Light", "Basic.Verbose", "Performance.Light", "Performance.Verbose", "Full.Light", "Full.Verbose", "SpinQuic.Light", "None")]
+    [ValidateSet("Basic.Light", "Datapath.Light", "Datapath.Verbose", "Stacks.Light", "Stacks.Verbose", "RPS.Light", "RPS.Verbose", "Performance.Light", "Basic.Verbose", "Performance.Light", "Performance.Verbose", "Full.Light", "Full.Verbose", "SpinQuic.Light", "None")]
     [string]$LogProfile = "None",
 
     [Parameter(Mandatory = $false)]
@@ -118,6 +118,9 @@ param (
 
     [Parameter(Mandatory = $false)]
     [switch]$XDP = $false,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$QTIP = $false,
 
     [Parameter(Mandatory = $false)]
     [int]$Timeout = 120,
@@ -154,6 +157,9 @@ if ($Kernel) {
     if ($XDP) {
         Write-Error "'-XDP' is not supported in kernel mode!"
     }
+    if ($QTIP) {
+        Write-Error "'-QTIP' is not supported in kernel mode!"
+    }
 }
 if (!$IsWindows) {
     if ($PGO) {
@@ -162,10 +168,18 @@ if (!$IsWindows) {
     if ($XDP) {
         Write-Error "'-XDP' is not supported on this platform!"
     }
+    if ($QTIP) {
+        Write-Error "'-QTIP' is not supported on this platform!"
+    }
 }
 
 if (!$IsWindows -and [string]::IsNullOrWhiteSpace($Remote)) {
     $Remote = "quic-server"
+}
+
+if ($PGO) {
+    # PGO makes things slower, so increase the timeout accordingly.
+    $Timeout = $Timeout * 5
 }
 
 # Root directory of the project.
@@ -242,6 +256,7 @@ Set-ScriptVariables -Local $Local `
                     -RemoteTls $RemoteTls `
                     -RemoteArch $RemoteArch `
                     -XDP $XDP `
+                    -QTIP $QTIP `
                     -Config $Config `
                     -Publish $Publish `
                     -Record $Record `
@@ -249,7 +264,8 @@ Set-ScriptVariables -Local $Local `
                     -RemoteAddress $RemoteAddress `
                     -Session $Session `
                     -Kernel $Kernel `
-                    -FailOnRegression $FailOnRegression
+                    -FailOnRegression $FailOnRegression `
+                    -PGO $PGO
 
 $RemotePlatform = Invoke-TestCommand -Session $Session -ScriptBlock {
     if ($IsWindows) {
@@ -259,7 +275,7 @@ $RemotePlatform = Invoke-TestCommand -Session $Session -ScriptBlock {
     }
 }
 
-$OutputDir = Join-Path $RootDir "artifacts/PerfDataResults/$RemotePlatform/$($RemoteArch)_$($Config)_$($RemoteTls)"
+$OutputDir = Join-Path $RootDir "artifacts/PerfDataResults/$RemotePlatform/$($RemoteArch)_$($Config)_$($RemoteTls)$($ExtraArtifactDir)"
 New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
 
 $DebugFileName = $Local ? "DebugLogLocal.txt" : "DebugLog.txt"
@@ -278,8 +294,11 @@ $LocalDirectory = Join-Path $RootDir "artifacts/bin"
 $RemoteDirectorySMB = $null
 
 # Copy manifest and log script to local directory
+Copy-Item -Path (Join-Path $RootDir scripts get-buildconfig.ps1) -Destination $LocalDirectory
 Copy-Item -Path (Join-Path $RootDir scripts log.ps1) -Destination $LocalDirectory
+Copy-Item -Path (Join-Path $RootDir scripts xdp-devkit.json) -Destination $LocalDirectory
 Copy-Item -Path (Join-Path $RootDir scripts prepare-machine.ps1) -Destination $LocalDirectory
+Copy-Item -Path (Join-Path $RootDir scripts xdp-devkit.json) -Destination $LocalDirectory
 Copy-Item -Path (Join-Path $RootDir src manifest MsQuic.wprp) -Destination $LocalDirectory
 
 if ($Local) {
@@ -411,6 +430,28 @@ function Invoke-Test {
         $RemoteArguments += " -stats:1"
     }
 
+    if ($LocalArguments.Contains("-sstats:1")) {
+        $RemoteArguments += " -sstats:1"
+    }
+
+    if ($LocalArguments.Contains("-exec:maxtput")) {
+        $RemoteArguments += " -exec:maxtput"
+    }
+
+    if ($LocalArguments.Contains("-exec:lowlat")) {
+        $RemoteArguments += " -exec:lowlat"
+    }
+
+    if ($XDP) {
+        $RemoteArguments += " -pollidle:10000"
+        $LocalArguments += " -pollidle:10000"
+    }
+
+    if ($QTIP) {
+        $RemoteArguments += " -qtip:1"
+        $LocalArguments += " -qtip:1"
+    }
+
     if ($Kernel) {
         $Arch = Split-Path (Split-Path $LocalExe -Parent) -Leaf
         $RootBinPath = Split-Path (Split-Path (Split-Path $LocalExe -Parent) -Parent) -Parent
@@ -457,9 +498,9 @@ function Invoke-Test {
     try {
         1..$NumIterations | ForEach-Object {
             Write-LogAndDebug "Running Local: $LocalExe Args: $LocalArguments"
-            $LocalResults = Invoke-LocalExe -Exe $LocalExe -RunArgs $LocalArguments -Timeout $Timeout -OutputDir $OutputDir
+            $LocalResults = Invoke-LocalExe -Exe $LocalExe -RunArgs $LocalArguments -Timeout $Timeout -OutputDir $OutputDir -HistogramFileName "$($Test)_run$($_).txt" -Iteration $_
             Write-LogAndDebug $LocalResults
-            $AllLocalParsedResults = Get-TestResult -Results $LocalResults -Matcher $Test.ResultsMatcher
+            $AllLocalParsedResults = Get-TestResult -Results $LocalResults -Matcher $Test.ResultsMatcher -FailureDefault $Test.FailureDefault
             $AllRunsResults += $AllLocalParsedResults
             if ($PGO) {
                 # Merge client PGO Counts
@@ -481,10 +522,12 @@ function Invoke-Test {
             $LocalResults | Write-LogAndDebug
         }
     } finally {
-        $RemoteResults = Wait-ForRemote -Job $RemoteJob
+        # -ErrorAction Continue for "perf" to return error when stop
+        $RemoteResults = Wait-ForRemote -Job $RemoteJob -ErrorAction Continue
         Write-LogAndDebug $RemoteResults.ToString()
 
-        Stop-RemoteLogs -RemoteDirectory $RemoteDirectory
+        # parallelize post processing with client
+        $StoppingRemoteJob = Stop-RemoteLogs -RemoteDirectory $RemoteDirectory
 
         if ($Kernel) {
             net.exe stop secnetperfdrvpriv /y | Out-Null
@@ -493,7 +536,9 @@ function Invoke-Test {
             sc.exe delete msquicpriv | Out-Null
         }
 
-        Stop-Tracing -LocalDirectory $LocalDirectory -OutputDir $OutputDir -Test $Test
+        # FIXME: Using Start-Job in this func cause program hang for some reason
+        Stop-Tracing -LocalDirectory $LocalDirectory -OutputDir $OutputDir -Test $Test -NumIterations $NumIterations
+        $StoppingRemoteJob | Wait-Job | Receive-Job -ErrorAction Continue
 
         if ($Record) {
             if ($Local) {
@@ -507,7 +552,11 @@ function Invoke-Test {
                 }
             } else {
                 try {
-                    Get-RemoteLogDirectory -Local (Join-Path $OutputDir $Test.ToString()) -Remote (Join-Path $RemoteDirectory serverlogs) -SmbDir (Join-Path $RemoteDirectorySMB serverlogs) -Cleanup
+                    $SmbDir = ""
+                    if ($IsWindows) {
+                        $SmbDir = (Join-Path $RemoteDirectorySMB serverlogs)
+                    }
+                    Get-RemoteLogDirectory -Local (Join-Path $OutputDir $Test.ToString()) -Remote (Join-Path $RemoteDirectory serverlogs) -SmbDir $SmbDir -Cleanup
                 } catch {
                     Write-Host "Failed to get remote logs"
                 }
@@ -550,7 +599,8 @@ try {
     Remove-PerfServices
 
     if ($IsWindows) {
-        Cancel-RemoteLogs -RemoteDirectory $RemoteDirectory
+        # Best effort, try to cancel any outstanding logs
+        try { Cancel-RemoteLogs -RemoteDirectory $RemoteDirectory } catch { }
 
         try {
             $CopyToDirectory = "C:\RunningTests"

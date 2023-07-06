@@ -10,6 +10,8 @@
 #pragma warning(disable:28922) // Redundant Pointer Test
 #pragma warning(disable:26451) // Arithmetic overflow: Using operator '+' on a 4 byte value and then casting the result to a 8 byte value.
 
+#define QUIC_API_ENABLE_PREVIEW_FEATURES 1
+
 #include "quic_platform.h"
 #include "quic_datapath.h"
 #include "quic_pcp.h"
@@ -212,7 +214,7 @@ CxPlatCryptUninitialize(
 // Platform Worker APIs
 //
 
-BOOLEAN
+void
 CxPlatWorkersInit(
     void
     );
@@ -222,20 +224,38 @@ CxPlatWorkersUninit(
     void
     );
 
-void
-CxPlatDataPathWake(
-    _In_ void* Context
+BOOLEAN
+CxPlatWorkersLazyStart(
+    _In_opt_ QUIC_EXECUTION_CONFIG* Config
+    );
+
+CXPLAT_EVENTQ*
+CxPlatWorkerGetEventQ(
+    _In_ uint16_t IdealProcessor
     );
 
 void
-CxPlatDataPathRunEC(
-    _In_ void** Context,
-    _In_ CXPLAT_THREAD_ID CurThreadId,
-    _In_ uint32_t WaitTime
+CxPlatDataPathProcessCqe(
+    _In_ CXPLAT_CQE* Cqe
     );
 
-void
-CxPlatWorkerRegisterDataPath(
-    _In_ uint16_t IdealProcessor,
-    _In_ void* Context
+BOOLEAN // Returns FALSE no work was done.
+CxPlatDataPathPoll(
+    _In_ void* Context,
+    _Out_ BOOLEAN* RemoveFromPolling
     );
+
+typedef struct DATAPATH_SQE {
+    uint32_t CqeType;
+#ifdef CXPLAT_SQE
+    CXPLAT_SQE Sqe;
+#endif
+} DATAPATH_SQE;
+
+#define CXPLAT_CQE_TYPE_WORKER_WAKE         CXPLAT_CQE_TYPE_QUIC_BASE + 1
+#define CXPLAT_CQE_TYPE_WORKER_UPDATE_POLL  CXPLAT_CQE_TYPE_QUIC_BASE + 2
+#define CXPLAT_CQE_TYPE_SOCKET_SHUTDOWN     CXPLAT_CQE_TYPE_QUIC_BASE + 3
+#define CXPLAT_CQE_TYPE_SOCKET_IO           CXPLAT_CQE_TYPE_QUIC_BASE + 4
+#define CXPLAT_CQE_TYPE_SOCKET_FLUSH_TX     CXPLAT_CQE_TYPE_QUIC_BASE + 5
+
+extern CXPLAT_RUNDOWN_REF CxPlatWorkerRundown;

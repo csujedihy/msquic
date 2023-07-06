@@ -32,6 +32,7 @@ namespace QuicTrace.DataModel
         ConnectionStart,
         ConnectionSetConfiguration,
         ConnectionSendResumptionTicket,
+        ConnectionCompleteResumptionTicketValidation,
         StreamOpen,
         StreamClose,
         StreamStart,
@@ -94,7 +95,7 @@ namespace QuicTrace.DataModel
         TLS_CERTIFICATE_REQUIRED = 0x174,
         TLS_NO_APPLICATION_PROTOCOL = 0x178,
 
-        QUIC_VERSION_NEGOTIATION_ERROR = 0x53F8
+        QUIC_VERSION_NEGOTIATION_ERROR = 0x11
     }
 
     public enum QuicExecutionType
@@ -156,6 +157,26 @@ namespace QuicTrace.DataModel
         Queued,
         Processing,
         Max
+    }
+
+    public enum QuicSendState
+    {
+        Disabled,
+        Started,
+        Reset,
+        ResetAcked,
+        Fin,
+        FinAcked
+    }
+
+    public enum QuicReceiveState
+    {
+        Disabled,
+        Started,
+        Paused,
+        Stopped,
+        Reset,
+        Fin
     }
 
     #region Global Events
@@ -780,6 +801,18 @@ namespace QuicTrace.DataModel
         }
     }
 
+    public class QuicConnectionCongestionV2Event : QuicEvent
+    {
+        public byte IsEcn { get; }
+        public override string PayloadString => string.Format("Congestion event IsEcn={0}", IsEcn);
+
+        internal QuicConnectionCongestionV2Event(Timestamp timestamp, ushort processor, uint processId, uint threadId, int pointerSize, ulong objectPointer, byte isEcn) :
+            base(QuicEventId.ConnCongestion, QuicObjectType.Connection, timestamp, processor, processId, threadId, pointerSize, objectPointer)
+        {
+            IsEcn = isEcn;
+        }
+    }
+
     public class QuicConnectionSourceCidAddedEvent : QuicEvent
     {
         public ulong SequenceNumber { get; }
@@ -841,6 +874,37 @@ namespace QuicTrace.DataModel
             PersistentCongestionCount = persistentCongestionCount;
             SendTotalBytes = sendTotalBytes;
             RecvTotalBytes = recvTotalBytes;
+        }
+    }
+
+    public class QuicConnectionStatsV2Event : QuicEvent
+    {
+        public uint SmoothedRtt { get; }
+
+        public uint CongestionCount { get; }
+
+        public uint PersistentCongestionCount { get; }
+
+        public ulong SendTotalBytes { get; }
+
+        public ulong RecvTotalBytes { get; }
+
+        public uint EcnCongestionCount { get; }
+
+        public override string PayloadString =>
+            string.Format("STATS: SmoothedRtt={0} CongestionCount={1} PersistentCongestionCount={2} SendTotalBytes={3} RecvTotalBytes={4} EcnCongestionCount={5}",
+                SmoothedRtt, CongestionCount, PersistentCongestionCount, SendTotalBytes, RecvTotalBytes, EcnCongestionCount);
+
+        internal QuicConnectionStatsV2Event(Timestamp timestamp, ushort processor, uint processId, uint threadId, int pointerSize, ulong objectPointer,
+                                          uint smoothedRtt, uint congestionCount, uint persistentCongestionCount, ulong sendTotalBytes, ulong recvTotalBytes, uint ecnCongestionCount) :
+            base(QuicEventId.ConnStatsV2, QuicObjectType.Connection, timestamp, processor, processId, threadId, pointerSize, objectPointer)
+        {
+            SmoothedRtt = smoothedRtt;
+            CongestionCount = congestionCount;
+            PersistentCongestionCount = persistentCongestionCount;
+            SendTotalBytes = sendTotalBytes;
+            RecvTotalBytes = recvTotalBytes;
+            EcnCongestionCount = ecnCongestionCount;
         }
     }
 
@@ -914,6 +978,32 @@ namespace QuicTrace.DataModel
             base(QuicEventId.StreamOutFlowBlocked, QuicObjectType.Stream, timestamp, processor, processId, threadId, pointerSize, objectPointer)
         {
             ReasonFlags = reasonFlags;
+        }
+    }
+
+    public class QuicStreamSendStateEvent : QuicEvent
+    {
+        public byte State { get; }
+
+        public QuicSendState SendState { get { return (QuicSendState)State; } }
+
+        internal QuicStreamSendStateEvent(Timestamp timestamp, ushort processor, uint processId, uint threadId, int pointerSize, ulong objectPointer, byte state) :
+            base(QuicEventId.StreamSendState, QuicObjectType.Stream, timestamp, processor, processId, threadId, pointerSize, objectPointer)
+        {
+            State = state;
+        }
+    }
+
+    public class QuicStreamRecvStateEvent : QuicEvent
+    {
+        public byte State { get; }
+
+        public QuicReceiveState ReceiveState { get { return (QuicReceiveState)State; } }
+
+        internal QuicStreamRecvStateEvent(Timestamp timestamp, ushort processor, uint processId, uint threadId, int pointerSize, ulong objectPointer, byte state) :
+            base(QuicEventId.StreamRecvState, QuicObjectType.Stream, timestamp, processor, processId, threadId, pointerSize, objectPointer)
+        {
+            State = state;
         }
     }
 
@@ -999,6 +1089,22 @@ namespace QuicTrace.DataModel
     {
         internal QuicStreamAppSendEvent(Timestamp timestamp, ushort processor, uint processId, uint threadId, int pointerSize, ulong objectPointer) :
             base(QuicEventId.StreamAppSend, QuicObjectType.Stream, timestamp, processor, processId, threadId, pointerSize, objectPointer)
+        {
+        }
+    }
+
+    public class QuicStreamReceiveFrameCompleteEvent : QuicEvent
+    {
+        internal QuicStreamReceiveFrameCompleteEvent(Timestamp timestamp, ushort processor, uint processId, uint threadId, int pointerSize, ulong objectPointer) :
+            base(QuicEventId.StreamReceiveFrameComplete, QuicObjectType.Stream, timestamp, processor, processId, threadId, pointerSize, objectPointer)
+        {
+        }
+    }
+
+    public class QuicStreamAppReceiveCompleteCallEvent : QuicEvent
+    {
+        internal QuicStreamAppReceiveCompleteCallEvent(Timestamp timestamp, ushort processor, uint processId, uint threadId, int pointerSize, ulong objectPointer) :
+            base(QuicEventId.StreamAppReceiveCompleteCall, QuicObjectType.Stream, timestamp, processor, processId, threadId, pointerSize, objectPointer)
         {
         }
     }

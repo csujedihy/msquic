@@ -13,6 +13,11 @@ Environment:
 
 --*/
 
+// For FreeBSD
+#if defined(__FreeBSD__)
+#include <pthread_np.h>
+#endif
+
 #include "platform_internal.h"
 #include "quic_platform.h"
 #include "quic_trace.h"
@@ -26,6 +31,12 @@ Environment:
 #ifdef QUIC_CLOG
 #include "platform_posix.c.clog.h"
 #endif
+
+#ifdef CXPLAT_NUMA_AWARE
+#include <numa.h>               // If missing: `apt-get install -y libnuma-dev`
+uint32_t CxPlatNumaNodeCount;
+cpu_set_t* CxPlatNumaNodeMasks;
+#endif // CXPLAT_NUMA_AWARE
 
 #define CXPLAT_MAX_LOG_MSG_LEN        1024 // Bytes
 
@@ -43,6 +54,10 @@ static const char TpLibName[] = "libmsquic.lttng.so." LIBRARY_VERSION;
 uint32_t CxPlatProcessorCount;
 
 uint64_t CxPlatTotalMemory;
+
+#if __APPLE__ || __FreeBSD__
+long CxPlatCurrentSqe = 0x80000000;
+#endif
 
 #ifdef __clang__
 __attribute__((noinline, noreturn, optnone))
@@ -83,7 +98,7 @@ CxPlatSystemLoad(
     void
     )
 {
-    #if defined(CX_PLATFORM_DARWIN)
+#if defined(CX_PLATFORM_DARWIN)
     //
     // arm64 macOS has no way to get the current proc, so treat as single core.
     // Intel macOS can return incorrect values for CPUID, so treat as single core.
@@ -92,6 +107,21 @@ CxPlatSystemLoad(
 #else
     CxPlatProcessorCount = (uint32_t)sysconf(_SC_NPROCESSORS_ONLN);
 #endif
+
+#ifdef CXPLAT_NUMA_AWARE
+    if (numa_available() >= 0) {
+        CxPlatNumaNodeCount = (uint32_t)numa_num_configured_nodes();
+        CxPlatNumaNodeMasks =
+            CXPLAT_ALLOC_NONPAGED(sizeof(cpu_set_t) * CxPlatNumaNodeCount, QUIC_POOL_PLATFORM_PROC);
+        CXPLAT_FRE_ASSERT(CxPlatNumaNodeMasks);
+        for (uint32_t n = 0; n < CxPlatNumaNodeCount; ++n) {
+            CPU_ZERO(&CxPlatNumaNodeMasks[n]);
+            CXPLAT_FRE_ASSERT(numa_node_to_cpus_compat((int)n, CxPlatNumaNodeMasks[n].__bits, sizeof(cpu_set_t)) >= 0);
+        }
+    } else {
+        CxPlatNumaNodeCount = 0;
+    }
+#endif // CXPLAT_NUMA_AWARE
 
 #ifdef DEBUG
     CxPlatform.AllocFailDenominator = 0;
@@ -196,38 +226,32 @@ CxPlatInitialize(
 
     RandomFd = open("/dev/urandom", O_RDONLY|O_CLOEXEC);
     if (RandomFd == -1) {
-        Status = (QUIC_STATUS)errno;
         QuicTraceEvent(
             LibraryErrorStatus,
             "[ lib] ERROR, %u, %s.",
-            Status,
+            errno,
             "open(/dev/urandom, O_RDONLY|O_CLOEXEC) failed");
-        goto Exit;
+        return (QUIC_STATUS)errno;
     }
 
-    if (!CxPlatWorkersInit()) {
-        Status = QUIC_STATUS_OUT_OF_MEMORY;
-        goto Exit;
+    Status = CxPlatCryptInitialize();
+    if (QUIC_FAILED(Status)) {
+        if (RandomFd != -1) {
+            close(RandomFd);
+        }
+        return Status;
     }
+
+    CxPlatWorkersInit();
 
     CxPlatTotalMemory = CGroupGetMemoryLimit();
-
-    Status = QUIC_STATUS_SUCCESS;
 
     QuicTraceLogInfo(
         PosixInitialized,
         "[ dso] Initialized (AvailMem = %llu bytes)",
         CxPlatTotalMemory);
 
-Exit:
-
-    if (QUIC_FAILED(Status)) {
-        if (RandomFd != -1) {
-            close(RandomFd);
-        }
-    }
-
-    return Status;
+    return QUIC_STATUS_SUCCESS;
 }
 
 void
@@ -236,6 +260,7 @@ CxPlatUninitialize(
     )
 {
     CxPlatWorkersUninit();
+    CxPlatCryptUninitialize();
     close(RandomFd);
     QuicTraceLogInfo(
         PosixUninitialized,
@@ -250,6 +275,7 @@ CxPlatAlloc(
 {
     UNREFERENCED_PARAMETER(Tag);
 #ifdef DEBUG
+    CXPLAT_DBG_ASSERT(ByteCount != 0);
     uint32_t Rand;
     if ((CxPlatform.AllocFailDenominator > 0 && (CxPlatRandom(sizeof(Rand), &Rand), Rand % CxPlatform.AllocFailDenominator) == 1) ||
         (CxPlatform.AllocFailDenominator < 0 && InterlockedIncrement(&CxPlatform.AllocCounter) % CxPlatform.AllocFailDenominator == 0)) {
@@ -275,6 +301,15 @@ CxPlatRefInitialize(
     )
 {
     *RefCount = 1;
+}
+
+void
+CxPlatRefInitializeEx(
+    _Inout_ CXPLAT_REF_COUNT* RefCount,
+    _In_ uint32_t Initial
+    )
+{
+    *RefCount = (int64_t)Initial;
 }
 
 void
@@ -646,18 +681,27 @@ CxPlatThreadCreate(
 
 #else // CXPLAT_USE_CUSTOM_THREAD_CONTEXT
 
+    //
+    // If pthread_create fails with an error code, then try again without the attribute
+    // because the CPU might be offline.
+    //
     if (pthread_create(Thread, &Attr, Config->Callback, Config->Context)) {
-        Status = errno;
-        QuicTraceEvent(
-            LibraryErrorStatus,
-            "[ lib] ERROR, %u, %s.",
-            Status,
-            "pthread_create failed");
+        QuicTraceLogWarning(
+            PlatformThreadCreateFailed,
+            "[ lib] pthread_create failed, retrying without affinitization");
+        if (pthread_create(Thread, NULL, Config->Callback, Config->Context)) {
+            Status = errno;
+            QuicTraceEvent(
+                LibraryErrorStatus,
+                "[ lib] ERROR, %u, %s.",
+                Status,
+                "pthread_create failed");
+        }
     }
 
 #endif // !CXPLAT_USE_CUSTOM_THREAD_CONTEXT
 
-#if !defined(__GLIBC__) && !defined(__ANDROID__)
+#if !defined(__ANDROID__)
     if (Status == QUIC_STATUS_SUCCESS) {
         if (Config->Flags & CXPLAT_THREAD_FLAG_SET_AFFINITIZE) {
             cpu_set_t CpuSet;
@@ -669,8 +713,16 @@ CxPlatThreadCreate(
                     "[ lib] ERROR, %s.",
                     "pthread_setaffinity_np failed");
             }
-        } else {
-            // TODO - Set Linux equivalent of NUMA affinity.
+#ifdef CXPLAT_NUMA_AWARE
+        } else if (CxPlatNumaNodeCount != 0) {
+            int IdealNumaNode = numa_node_of_cpu((int)Config->IdealProcessor);
+            if (pthread_setaffinity_np(*Thread, sizeof(cpu_set_t), &CxPlatNumaNodeMasks[IdealNumaNode])) {
+                QuicTraceEvent(
+                    LibraryError,
+                    "[ lib] ERROR, %s.",
+                    "pthread_setaffinity_np failed");
+            }
+#endif
         }
     }
 #endif
@@ -786,7 +838,11 @@ CxPlatCurThreadID(
     )
 {
 
-#if defined(CX_PLATFORM_LINUX)
+// For FreeBSD
+#if defined(__FreeBSD__)
+    return pthread_getthreadid_np();
+
+#elif defined(CX_PLATFORM_LINUX)
 
     CXPLAT_STATIC_ASSERT(sizeof(pid_t) <= sizeof(CXPLAT_THREAD_ID), "PID size exceeds the expected size");
     return syscall(SYS_gettid);

@@ -65,10 +65,13 @@ class TestConnection
     bool CustomValidationResultSet : 1;
 
     bool ExpectedResumed    : 1;
+    QUIC_STATUS ExpectedCustomTicketValidationResult;
     QUIC_STATUS ExpectedTransportCloseStatus;
     QUIC_UINT62 ExpectedPeerCloseErrorCode;
-    QUIC_STATUS ExpectedClientCertValidationResult;
+    QUIC_STATUS ExpectedClientCertValidationResult[2];
+    uint32_t ExpectedClientCertValidationResultCount;
     bool ExpectedCustomValidationResult;
+    QUIC_STATUS PeerCertEventReturnStatus;
 
     QUIC_STATUS TransportCloseStatus;
     QUIC_UINT62 PeerCloseErrorCode;
@@ -89,6 +92,9 @@ class TestConnection
     uint32_t DatagramsSuspectLost;
     uint32_t DatagramsLost;
     uint32_t DatagramsAcknowledged;
+
+    const uint8_t* NegotiatedAlpn;
+    uint8_t NegotiatedAlpnLength;
 
     QUIC_STATUS
     HandleConnectionEvent(
@@ -206,9 +212,17 @@ public:
     QUIC_UINT62 GetExpectedCustomValidationResult() const { return ExpectedCustomValidationResult; };
     void SetExpectedCustomValidationResult(bool AcceptCert) { CustomValidationResultSet = true; ExpectedCustomValidationResult = AcceptCert; }
     void SetAsyncCustomValidationResult(bool Async) { AsyncCustomValidation = Async; }
+    void SetExpectedCustomTicketValidationResult(QUIC_STATUS Status) { ExpectedCustomTicketValidationResult = Status; }
 
-    QUIC_STATUS GetExpectedClientCertValidationResult() const { return ExpectedClientCertValidationResult; }
-    void SetExpectedClientCertValidationResult(QUIC_STATUS Status) { ExpectedClientCertValidationResult = Status; }
+    const QUIC_STATUS* GetExpectedClientCertValidationResult() const { return ExpectedClientCertValidationResult; }
+    void AddExpectedClientCertValidationResult(QUIC_STATUS Status) {
+        CXPLAT_FRE_ASSERTMSG(
+            ExpectedClientCertValidationResultCount < ARRAYSIZE(ExpectedClientCertValidationResult),
+            "Only two expected values supported.");
+        ExpectedClientCertValidationResult[ExpectedClientCertValidationResultCount++] = Status;
+    }
+
+    void SetPeerCertEventReturnStatus(QUIC_STATUS Value) { PeerCertEventReturnStatus = Value; }
 
     uint32_t GetDatagramsSent() const { return DatagramsSent; }
     uint32_t GetDatagramsCanceled() const { return DatagramsCanceled; }
@@ -239,11 +253,17 @@ public:
     QUIC_STATUS GetRemoteAddr(_Out_ QuicAddr &remoteAddr);
     QUIC_STATUS SetRemoteAddr(_In_ const QuicAddr &remoteAddr);
 
+    bool GetEcnEnabled();
+    QUIC_STATUS SetEcnEnabled(bool value);
+
     uint64_t GetIdleTimeout();                          // milliseconds
     QUIC_STATUS SetIdleTimeout(uint64_t value);         // milliseconds
 
     uint32_t GetDisconnectTimeout();                    // milliseconds
     QUIC_STATUS SetDisconnectTimeout(uint32_t value);   // milliseconds
+
+    uint32_t GetDestCidUpdateIdleTimeoutMs();                   // milliseconds
+    QUIC_STATUS SetDestCidUpdateIdleTimeoutMs(uint32_t value);  // milliseconds
 
     uint16_t GetPeerBidiStreamCount();
     QUIC_STATUS SetPeerBidiStreamCount(uint16_t value);
@@ -277,5 +297,14 @@ public:
 
     QUIC_STATUS SetResumptionTicket(const QUIC_BUFFER* ResumptionTicket) const;
 
-    QUIC_STATUS SetCustomValidationResult(bool AcceptCert);
+    QUIC_STATUS SetCustomValidationResult(bool AcceptCert, QUIC_TLS_ALERT_CODES TlsAlert = QUIC_TLS_ALERT_CODE_BAD_CERTIFICATE);
+
+    QUIC_STATUS SetCustomTicketValidationResult(bool AcceptTicket);
+
+    uint32_t GetDestCidUpdateCount();
+
+    const uint8_t* GetNegotiatedAlpn() const;
+    uint8_t GetNegotiatedAlpnLength() const;
+
+    QUIC_STATUS SetTlsSecrets(QUIC_TLS_SECRETS* Secrets);
 };

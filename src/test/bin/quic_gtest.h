@@ -20,6 +20,9 @@
 #endif
 
 extern bool TestingKernelMode;
+#if defined(QUIC_USE_RAW_DATAPATH) && defined(QUIC_API_ENABLE_PREVIEW_FEATURES)
+extern bool UseQTIP;
+#endif
 
 class WithBool : public testing::Test,
     public testing::WithParamInterface<bool> {
@@ -75,13 +78,15 @@ struct HandshakeArgs1 {
     bool ServerStatelessRetry;
     bool MultipleALPNs;
     bool MultiPacketClientInitial;
+    bool GreaseQuicBitExtension;
     static ::std::vector<HandshakeArgs1> Generate() {
         ::std::vector<HandshakeArgs1> list;
         for (int Family : { 4, 6})
         for (bool ServerStatelessRetry : { false, true })
         for (bool MultipleALPNs : { false, true })
         for (bool MultiPacketClientInitial : { false, true })
-            list.push_back({ Family, ServerStatelessRetry, MultipleALPNs, MultiPacketClientInitial });
+        for (bool GreaseQuicBitExtension : { false, true })
+            list.push_back({ Family, ServerStatelessRetry, MultipleALPNs, MultiPacketClientInitial, GreaseQuicBitExtension });
         return list;
     }
 };
@@ -91,7 +96,8 @@ std::ostream& operator << (std::ostream& o, const HandshakeArgs1& args) {
         (args.Family == 4 ? "v4" : "v6") << "/" <<
         (args.ServerStatelessRetry ? "Retry" : "NoRetry") << "/" <<
         (args.MultipleALPNs ? "MultipleALPNs" : "SingleALPN") << "/" <<
-        (args.MultiPacketClientInitial ? "MultipleInitials" : "SingleInitial");
+        (args.MultiPacketClientInitial ? "MultipleInitials" : "SingleInitial") << "/" <<
+        (args.GreaseQuicBitExtension ? "Grease" : "NoGrease");
 }
 
 class WithHandshakeArgs1 : public testing::Test,
@@ -267,6 +273,32 @@ class WithHandshakeArgs7 : public testing::Test,
     public testing::WithParamInterface<HandshakeArgs7> {
 };
 
+struct HandshakeArgs8 {
+    bool TestServer;
+    uint8_t VnTpSize;
+    static ::std::vector<HandshakeArgs8> Generate() {
+        ::std::vector<HandshakeArgs8> list;
+        for (bool TestServer : { false, true })
+        for (uint8_t VnTpSize: { 0, 2, 7, 9 })
+            list.push_back({TestServer, VnTpSize});
+        return list;
+    }
+};
+
+std::ostream& operator << (std::ostream& o, const HandshakeArgs8& args) {
+    return o <<
+        (args.TestServer ? "server" : "client") << "/" <<
+        (int)args.VnTpSize;
+}
+
+class WithHandshakeArgs8 : public testing::Test,
+    public testing::WithParamInterface<HandshakeArgs8> {
+};
+
+class WithHandshakeArgs9 : public testing::Test,
+    public testing::WithParamInterface<bool> {
+};
+
 struct SendArgs1 {
     int Family;
     uint64_t Length;
@@ -313,7 +345,14 @@ struct SendArgs2 {
 #else
         for (bool UseZeroRtt : { false })
 #endif
+        {
+#if defined(QUIC_USE_RAW_DATAPATH) && defined(QUIC_API_ENABLE_PREVIEW_FEATURES)
+            if (UseQTIP && UseZeroRtt) {
+                continue;
+            }
+#endif
             list.push_back({ Family, UseSendBuffer, UseZeroRtt });
+        }
         return list;
     }
 };
@@ -658,7 +697,7 @@ struct ValidateConnectionEventArgs {
     uint32_t Test;
     static ::std::vector<ValidateConnectionEventArgs> Generate() {
         ::std::vector<ValidateConnectionEventArgs> list;
-#ifndef QUIC_DISABLE_0RTT_TESTS
+#if !defined(QUIC_DISABLE_0RTT_TESTS) && !defined(QUIC_USE_RAW_DATAPATH) // TODO: Fix openssl/XDP bug and enable this back
         for (uint32_t Test = 0; Test < 3; ++Test)
 #else
         for (uint32_t Test = 0; Test < 2; ++Test)

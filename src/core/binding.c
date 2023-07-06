@@ -30,7 +30,7 @@ Abstract:
     (ARRAYSIZE(QuicSupportedVersionList) * sizeof(uint32_t)) \
 )
 CXPLAT_STATIC_ASSERT(
-    QUIC_DPLPMUTD_MIN_MTU - 48 >= MAX_VER_NEG_PACKET_LENGTH,
+    QUIC_DPLPMTUD_MIN_MTU - 48 >= MAX_VER_NEG_PACKET_LENGTH,
     "Too many supported version numbers! Requires too big of buffer for response!");
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
@@ -314,13 +314,13 @@ QuicBindingHasListenerRegistered(
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
-BOOLEAN
+QUIC_STATUS
 QuicBindingRegisterListener(
     _In_ QUIC_BINDING* Binding,
     _In_ QUIC_LISTENER* NewListener
     )
 {
-    BOOLEAN AddNewListener = TRUE;
+    QUIC_STATUS Status = QUIC_STATUS_SUCCESS;
     BOOLEAN MaximizeLookup = FALSE;
 
     const QUIC_ADDR* NewAddr = &NewListener->LocalAddress;
@@ -373,12 +373,12 @@ QuicBindingRegisterListener(
                 BindingListenerAlreadyRegistered,
                 "[bind][%p] Listener (%p) already registered on ALPN",
                 Binding, ExistingListener);
-            AddNewListener = FALSE;
+            Status = QUIC_STATUS_ALPN_IN_USE;
             break;
         }
     }
 
-    if (AddNewListener) {
+    if (Status == QUIC_STATUS_SUCCESS) {
         MaximizeLookup = CxPlatListIsEmpty(&Binding->Listeners);
 
         //
@@ -402,10 +402,10 @@ QuicBindingRegisterListener(
     if (MaximizeLookup &&
         !QuicLookupMaximizePartitioning(&Binding->Lookup)) {
         QuicBindingUnregisterListener(Binding, NewListener);
-        AddNewListener = FALSE;
+        Status = QUIC_STATUS_OUT_OF_MEMORY;
     }
 
-    return AddNewListener;
+    return Status;
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
@@ -542,6 +542,8 @@ QuicBindingAcceptConnection(
     }
     CxPlatCopyMemory(NegotiatedAlpn, Info->NegotiatedAlpn - 1, NegotiatedAlpnLength);
     Connection->Crypto.TlsState.NegotiatedAlpn = NegotiatedAlpn;
+    Connection->Crypto.TlsState.ClientAlpnList = Info->ClientAlpnList;
+    Connection->Crypto.TlsState.ClientAlpnListLength = Info->ClientAlpnListLength;
 
     //
     // Allow for the listener to decide if it wishes to accept the incoming
@@ -811,12 +813,8 @@ QuicBindingProcessStatelessOperation(
         Binding,
         OperationType);
 
-    CXPLAT_SEND_DATA* SendData =
-        CxPlatSendDataAlloc(
-            Binding->Socket,
-            CXPLAT_ECN_NON_ECT,
-            0,
-            RecvDatagram->Route);
+    CXPLAT_SEND_CONFIG SendConfig = { RecvDatagram->Route, 0, CXPLAT_ECN_NON_ECT, 0 };
+    CXPLAT_SEND_DATA* SendData = CxPlatSendDataAlloc(Binding->Socket, &SendConfig);
     if (SendData == NULL) {
         QuicTraceEvent(
             AllocFailure,
@@ -1067,8 +1065,7 @@ QuicBindingProcessStatelessOperation(
         RecvDatagram->Route,
         SendData,
         SendDatagram->Length,
-        1,
-        RecvDatagram->PartitionIndex % MsQuicLib.PartitionCount);
+        1);
     SendData = NULL;
 
 Exit:
@@ -1289,14 +1286,13 @@ QuicBindingCreateConnection(
     QUIC_STATUS Status =
         QuicConnAlloc(
             MsQuicLib.StatelessRegistration,
+            Worker,
             Datagram,
             &NewConnection);
     if (QUIC_FAILED(Status)) {
         QuicPacketLogDrop(Binding, Packet, "Failed to initialize new connection");
         return NULL;
     }
-
-    QuicWorkerAssignConnection(Worker, NewConnection);
 
     BOOLEAN BindingRefAdded = FALSE;
     CXPLAT_DBG_ASSERT(NewConnection->SourceCids.Next != NULL);
@@ -1363,8 +1359,9 @@ Exit:
             Oper->API_CALL.Context = &NewConnection->BackupApiContext;
             Oper->API_CALL.Context->Type = QUIC_API_TYPE_CONN_SHUTDOWN;
             Oper->API_CALL.Context->CONN_SHUTDOWN.Flags = QUIC_CONNECTION_SHUTDOWN_FLAG_SILENT;
-            Oper->API_CALL.Context->CONN_SHUTDOWN.ErrorCode = 0;
+            Oper->API_CALL.Context->CONN_SHUTDOWN.ErrorCode = (QUIC_VAR_INT)QUIC_STATUS_INTERNAL_ERROR;
             Oper->API_CALL.Context->CONN_SHUTDOWN.RegistrationShutdown = FALSE;
+            Oper->API_CALL.Context->CONN_SHUTDOWN.TransportShutdown = TRUE;
             QuicConnQueueOper(NewConnection, Oper);
         }
 #pragma warning(pop)
@@ -1496,6 +1493,11 @@ QuicBindingDeliverDatagrams(
         // be created.
         //
 
+        if (!Binding->ServerOwned) {
+            QuicPacketLogDrop(Binding, Packet, "No matching client connection");
+            return FALSE;
+        }
+
         if (Binding->Exclusive) {
             QuicPacketLogDrop(Binding, Packet, "No connection on exclusive binding");
             return FALSE;
@@ -1551,7 +1553,20 @@ QuicBindingDeliverDatagrams(
                 TRUE,
                 Packet,
                 &Token,
-                &TokenLength)) {
+                &TokenLength,
+                /*
+                    TODO : When NEW_TOKEN implementation is done, server should remember the NEW_TOKEN and when -
+                    is sent to the client, if the NEW_TOKEN validated by server we can accept this bit as 0.
+
+                    A client MAY also set the QUIC Bit to 0 in Initial, Handshake,
+                    or 0-RTT packets that are sent prior to receiving transport parameters from the server.
+                    However, a client MUST NOT set the QUIC Bit to 0 unless the Initial packets
+                    it sends include a token provided by the server in a NEW_TOKEN frame (Section 19.7 of [QUIC]),
+                    received less than 604800 seconds (7 days) prior on a connection where the server also
+                    included the grease_quic_bit transport parameter.
+                    (see: https://www.ietf.org/archive/id/draft-ietf-quic-bit-grease-04.html - 3.1 Clearing the QUIC Bit)
+                */
+                FALSE)) { // This parameter should be FALSE for now. We shouldn't ignore the fixed bit on initial packet from client.
             return FALSE;
         }
 
@@ -1610,6 +1625,8 @@ QuicBindingReceive(
     uint32_t TotalChainLength = 0;
     uint32_t TotalDatagramBytes = 0;
 
+    CXPLAT_DBG_ASSERT(Socket == Binding->Socket);
+
     //
     // Breaks the chain of datagrams into subchains by destination CID and
     // delivers the subchains.
@@ -1620,7 +1637,7 @@ QuicBindingReceive(
     // connection it was delivered to.
     //
 
-    uint32_t Proc = CxPlatProcCurrentNumber();
+    uint16_t Proc = QuicLibraryGetCurrentPartition();
     uint64_t ProcShifted = ((uint64_t)Proc + 1) << 40;
 
     CXPLAT_RECV_DATA* Datagram;
@@ -1780,8 +1797,7 @@ QuicBindingSend(
     _In_ const CXPLAT_ROUTE* Route,
     _In_ CXPLAT_SEND_DATA* SendData,
     _In_ uint32_t BytesToSend,
-    _In_ uint32_t DatagramsToSend,
-    _In_ uint16_t IdealProcessor
+    _In_ uint32_t DatagramsToSend
     )
 {
     QUIC_STATUS Status;
@@ -1810,8 +1826,7 @@ QuicBindingSend(
                 CxPlatSocketSend(
                     Binding->Socket,
                     &RouteCopy,
-                    SendData,
-                    IdealProcessor);
+                    SendData);
             if (QUIC_FAILED(Status)) {
                 QuicTraceLogWarning(
                     BindingSendFailed,
@@ -1826,8 +1841,7 @@ QuicBindingSend(
             CxPlatSocketSend(
                 Binding->Socket,
                 Route,
-                SendData,
-                IdealProcessor);
+                SendData);
         if (QUIC_FAILED(Status)) {
             QuicTraceLogWarning(
                 BindingSendFailed,

@@ -97,7 +97,7 @@ param (
     [string]$Arch = "",
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("schannel", "openssl")]
+    [ValidateSet("schannel", "openssl", "openssl3")]
     [string]$Tls = "",
 
     [Parameter(Mandatory = $false)]
@@ -142,7 +142,7 @@ param (
     [switch]$EnableAppVerifier = $false,
 
     [Parameter(Mandatory = $false)]
-    [switch]$EnableTcpipVerifier = $false,
+    [switch]$EnableSystemVerifier = $false,
 
     [Parameter(Mandatory = $false)]
     [switch]$CodeCoverage = $false,
@@ -154,13 +154,25 @@ param (
     [switch]$AZP = $false,
 
     [Parameter(Mandatory = $false)]
+    [switch]$GHA = $false,
+
+    [Parameter(Mandatory = $false)]
     [switch]$SkipUnitTests = $false,
 
     [Parameter(Mandatory = $false)]
     [switch]$ErrorsAsWarnings = $false,
 
     [Parameter(Mandatory = $false)]
-    [switch]$DuoNic = $false
+    [switch]$DuoNic = $false,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$UseXdp = $false,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$UseQtip = $false,
+
+    [Parameter(Mandatory = $false)]
+    [string]$OsRunner = ""
 )
 
 Set-StrictMode -Version 'Latest'
@@ -195,6 +207,11 @@ if ($CodeCoverage) {
     if (!(Test-Path "C:\Program Files\OpenCppCoverage\OpenCppCoverage.exe")) {
         Write-Error "Code coverage tools are not installed";
     }
+}
+
+if ($UseXdp) {
+    # Helper for XDP usage
+    $DuoNic = $true
 }
 
 $BuildConfig = & (Join-Path $PSScriptRoot get-buildconfig.ps1) -Tls $Tls -Arch $Arch -ExtraArtifactDir $ExtraArtifactDir -Config $Config
@@ -301,8 +318,8 @@ if ($NoProgress) {
 if ($EnableAppVerifier) {
     $TestArguments += " -EnableAppVerifier"
 }
-if ($EnableTcpipVerifier) {
-    $TestArguments += " -EnableTcpipVerifier"
+if ($EnableSystemVerifier) {
+    $TestArguments += " -EnableSystemVerifier"
 }
 if ($CodeCoverage) {
     $TestArguments += " -CodeCoverage"
@@ -310,8 +327,17 @@ if ($CodeCoverage) {
 if ($AZP) {
     $TestArguments += " -AZP"
 }
+if ($GHA) {
+    $TestArguments += " -GHA"
+}
 if ($ErrorsAsWarnings) {
     $TestArguments += " -ErrorsAsWarnings"
+}
+if ("" -ne $OsRunner) {
+    $TestArguments += " -OsRunner $OsRunner"
+}
+if ($UseQtip) {
+    $TestArguments += " -UseQtip"
 }
 
 if (![string]::IsNullOrWhiteSpace($ExtraArtifactDir)) {
@@ -320,8 +346,8 @@ if (![string]::IsNullOrWhiteSpace($ExtraArtifactDir)) {
 
 # Run the script.
 if (!$Kernel -and !$SkipUnitTests) {
-    Invoke-Expression ($RunTest + " -Path $MsQuicCoreTest " + $TestArguments)
     Invoke-Expression ($RunTest + " -Path $MsQuicPlatTest " + $TestArguments)
+    Invoke-Expression ($RunTest + " -Path $MsQuicCoreTest " + $TestArguments)
 }
 Invoke-Expression ($RunTest + " -Path $MsQuicTest " + $TestArguments)
 

@@ -21,6 +21,7 @@ typedef struct QUIC_CREDENTIAL_CONFIG {
     void* Reserved; // Currently unused
     QUIC_CREDENTIAL_LOAD_COMPLETE_HANDLER AsyncHandler; // Optional
     QUIC_ALLOWED_CIPHER_SUITE_FLAGS AllowedCipherSuites;// Optional
+    const char* CaCertificateFile;                      // Optional
 } QUIC_CREDENTIAL_CONFIG;
 ```
 
@@ -62,7 +63,7 @@ Only valid for OpenSSL.
 `QUIC_CREDENTIAL_TYPE_CERTIFICATE_PKCS12`
 
 Provide an in-memory ASN.1 blob of a PKCS12 (PFX) certificate and private, with optional private key password, pointed to by the `CertificatePkcs12` member.
-Not currently supported.
+Only valid for OpenSSL.
 
 #### `Flags`
 
@@ -140,6 +141,26 @@ Not supported in kernel mode.
 
 Tells the TLS layer (currently only supported by Schannel) to only use the supplied client certificate and not go looking for one on its own if the server asked for a certificate but the client app didn't supply one. More information can be found [here](https://docs.microsoft.com/en-us/windows/win32/secauthn/performing-authentication-using-schannel#authenticating-the-client).
 
+`QUIC_CREDENTIAL_FLAG_USE_SYSTEM_MAPPER`
+
+Tells the TLS layer (only supported by Schannel server) to use the system credential mapper to map the client-supplied credentials to a user account on the system.
+
+`QUIC_CREDENTIAL_FLAG_CACHE_ONLY_URL_RETRIEVAL`
+
+Only use certificates already cached when doing URL retrieval to build a certificate chain. Only valid on Windows.
+
+`QUIC_CREDENTIAL_FLAG_REVOCATION_CHECK_CACHE_ONLY`
+
+Only use cached revocation information when checking a certificate chain. Only valid on Windows.
+
+`QUIC_CREDENTIAL_FLAG_INPROC_PEER_CERTIFICATE`
+
+Obtain the peer certificate using a faster in-process API call. Only available on Schannel in the latest Windows 11 builds.
+
+`QUIC_CREDENTIAL_FLAG_SET_CA_CERTIFICATE_FILE`
+
+Enable CA certificate file provided in the `CaCertificateFile` member.
+
 #### `CertificateHash`
 
 Must **only** use with `QUIC_CREDENTIAL_TYPE_CERTIFICATE_HASH` type.
@@ -175,6 +196,12 @@ Optional callback to receive completion of asynchronous credential load. Only us
 #### `AllowedCipherSuites`
 
 A set of flags indicating which cipher suites are available to negotiate. Must be used with `QUIC_CREDENTIAL_FLAG_SET_ALLOWED_CIPHER_SUITES`.
+
+#### `CaCertificateFile`
+
+Optional pointer to CA certificate file that will be used when
+validating the peer certificate. This allows the use of a private CA.
+Must be used with `QUIC_CREDENTIAL_FLAG_SET_CA_CERTIFICATE_FILE`.
 
 # Remarks
 

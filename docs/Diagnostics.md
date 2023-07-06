@@ -6,7 +6,8 @@ This document describes various ways to debug and diagnose issues when using MsQ
 
 For debugging issues, logging is generally the best way to diagnose problems. MsQuic has extensive logs in the code to facilitate debugging. The logs can simply be converted to human readable text or they can be processed by various automated tools to help improve diagnostics.
 
-> **Note** - Currently tools only support Windows ETW.
+> **Note**
+> Currently tools only support Windows ETW.
 
 ### Windows
 
@@ -14,13 +15,17 @@ On Windows, MsQuic leverages manifested [ETW](https://docs.microsoft.com/en-us/w
 
 ### Linux
 
+#### LTTng
 On Linux, MsQuic leverages [LTTng](https://lttng.org/features/) for its logging. Some dependencies, such as babeltrace, lttng, and clog2text_lttng are required. The simplest way to install all dependencies is by running `./scripts/prepare-machine.ps1 -ForTest`, but if you only want to collect the traces on the machine, the **minimal dependencies** are:
 
 ```
-sudo apt-add-repository ppa:lttng/stable-2.12
+sudo apt-add-repository ppa:lttng/stable-2.13
 sudo apt-get update
 sudo apt-get install -y lttng-tools
 ```
+
+#### Perf
+For general tracing, refer [Stacks and CPU usage](../src/plugins/trace/README.md#linux)
 
 ### macOS
 
@@ -98,6 +103,7 @@ wpr.exe -start MsQuic.wprp!PROFILE -filemode
 You must replace `PROFILE` with the name of the profile you want to run. Some of the useful profiles are:
 
 - `Stacks.Light`- Collects CPU callstacks.
+- `Stacks.Verbose`- Collects CPU callstacks, DPCs and interrupts.
 - `Performance.Light` - Collects performance related events useful for automated tool processing.
 - `Performance.Verbose` - Collects `Performance.Light` plus CPU callstacks.
 - `Basic.Light` - Collects general, "low volume" MsQuic events. Useful for a "big picture" understanding, with as few events collected as possible.
@@ -128,12 +134,24 @@ As already indicated, there are lots of ways to collect ETW traces. Feel free to
 
 ## Linux
 
-To start collecting a trace, you can use the following commands:
-
+### All in one command
+This script wraps collecting trace then converting to text as well
+**WARN**: This wrapper doesn't work with `./scripts/test.ps1` etc. as it is also creating lttng session internally.
+```sh
+cd ${MSQUIC_PATH}
+./scripts/log_wrapper.sh ${YOUR_COMMAND}
+# e.g.
+./scripts/log_wrapper.sh ./artifacts/bin/linux/x64_Debug_openssl/msquictest --gtest_filter=Basic.*
+ls msquic_lttng0
+# data  quic.babel.txt  quic.log
 ```
+### Step by step command
+Instead, you can use the following commands:
+
+```sh
 mkdir msquic_lttng
 lttng create msquic -o=./msquic_lttng
-lttng enable-event --userspace CLOG_*
+lttng enable-event --userspace "CLOG_*"
 lttng add-context --userspace --type=vpid --type=vtid
 lttng start
 ```
@@ -171,14 +189,26 @@ Replace `path\to` with the actual paths to the respective files. With the latest
 
 ## Linux
 
+NOTE: `msquic.lttng.so` must be built to enable lttng logging - see https://lttng.org/docs/v2.13/#doc-liblttng-ust-dl
+and it must be placed in the same directory as the `msquic.so`.
+
+Building `clog2text_lttng`:
+```
+apt install --no-install-recommends -y dotnet-runtime-6.0 dotnet-sdk-6.0 dotnet-host
+git submodule update --init submodules/clog
+dotnet build submodules/clog/src/clog2text/clog2text_lttng/ -c Release
+export PATH=$PWD/submodules/clog/src/clog2text/clog2text_lttng/bin/Release/net6.0/:$PATH
+```
+
 To convert the trace, you can use the following commands:
 
 ```
 babeltrace --names all ./msquic_lttng/* > quic.babel.txt
-clog2text_lttng -i quic.babel.txt -s clog.sidecar -o quic.log --showTimestamp --showCpuInfo
+~/.dotnet/tools/clog2text_lttng -i quic.babel.txt -s clog.sidecar -o quic.log --showTimestamp --showCpuInfo
 ```
 
-> **Note** - The `clog.sidecar` file that was used to build MsQuic must be used. It can be found in the `./src/manifest` directory of the repository.
+> **Note**
+> The `clog.sidecar` file that was used to build MsQuic must be used. It can be found in the `./src/manifest` directory of the repository.
 
 # Trace Analysis
 
@@ -192,7 +222,8 @@ When viewing the traces as text, we recommend [TextAnalysisTool.NET](https://tex
 
 You may also open the trace in Windows Performance Analyzer. See the [WPA instructions](../src/plugins/trace/README.md) for more details.
 
-> **Note** - WPA support for LTTng based logs is not yet available but will be supported in the future.
+> **Note**
+> WPA support for LTTng based logs is not yet available but will be supported in the future.
 
 # Performance Counters
 

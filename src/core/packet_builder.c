@@ -197,6 +197,14 @@ QuicPacketBuilderPrepare(
         Connection->Stats.QuicVersion == QUIC_VERSION_2 ?
             QuicKeyTypeToPacketTypeV2(NewPacketKeyType) :
             QuicKeyTypeToPacketTypeV1(NewPacketKeyType);
+
+    //
+    // For now, we can't send QUIC Bit as 0 on initial packets from client to server.
+    // see: https://www.ietf.org/archive/id/draft-ietf-quic-bit-grease-04.html#name-clearing-the-quic-bit
+    //
+    BOOLEAN FixedBit = (QuicConnIsClient(Connection) &&
+        (NewPacketType == (uint8_t)QUIC_INITIAL_V1 || NewPacketKeyType == (uint8_t)QUIC_INITIAL_V2)) ? TRUE : Connection->State.FixedBit;
+
     uint16_t DatagramSize = Builder->Path->Mtu;
     if ((uint32_t)DatagramSize > Builder->Path->Allowance) {
         CXPLAT_DBG_ASSERT(!IsPathMtuDiscovery); // PMTUD always happens after source addr validation.
@@ -210,7 +218,7 @@ QuicPacketBuilderPrepare(
     // the current one doesn't match, finalize it and then start a new one.
     //
 
-    uint32_t Proc = CxPlatProcCurrentNumber();
+    uint16_t Proc = QuicLibraryGetCurrentPartition();
     uint64_t ProcShifted = ((uint64_t)Proc + 1) << 40;
 
     BOOLEAN NewQuicPacket = FALSE;
@@ -247,16 +255,19 @@ QuicPacketBuilderPrepare(
         if (Builder->SendData == NULL) {
             Builder->BatchId =
                 ProcShifted | InterlockedIncrement64((int64_t*)&MsQuicLib.PerProc[Proc].SendBatchId);
+            CXPLAT_SEND_CONFIG SendConfig = {
+                &Builder->Path->Route,
+                IsPathMtuDiscovery ?
+                    0 :
+                    MaxUdpPayloadSizeForFamily(
+                        QuicAddrGetFamily(&Builder->Path->Route.RemoteAddress),
+                        DatagramSize),
+                Builder->EcnEctSet ? CXPLAT_ECN_ECT_0 : CXPLAT_ECN_NON_ECT,
+                Builder->Connection->Registration->ExecProfile == QUIC_EXECUTION_PROFILE_TYPE_MAX_THROUGHPUT ?
+                    CXPLAT_SEND_FLAGS_MAX_THROUGHPUT : CXPLAT_SEND_FLAGS_NONE
+            };
             Builder->SendData =
-                CxPlatSendDataAlloc(
-                    Builder->Path->Binding->Socket,
-                    CXPLAT_ECN_NON_ECT,
-                    IsPathMtuDiscovery ?
-                        0 :
-                        MaxUdpPayloadSizeForFamily(
-                            QuicAddrGetFamily(&Builder->Path->Route.RemoteAddress),
-                            DatagramSize),
-                    &Builder->Path->Route);
+                CxPlatSendDataAlloc(Builder->Path->Binding->Socket, &SendConfig);
             if (Builder->SendData == NULL) {
                 QuicTraceEvent(
                     AllocFailure,
@@ -401,6 +412,7 @@ QuicPacketBuilderPrepare(
                         Builder->PacketNumberLength,
                         Builder->Path->SpinBit,
                         PacketSpace->CurrentKeyPhase,
+                        FixedBit,
                         BufferSpaceAvailable,
                         Header);
                 Builder->Metadata->Flags.KeyPhase = PacketSpace->CurrentKeyPhase;
@@ -423,6 +435,7 @@ QuicPacketBuilderPrepare(
                     QuicPacketEncodeLongHeaderV1(
                         Connection->Stats.QuicVersion,
                         NewPacketType,
+                        FixedBit,
                         &Builder->Path->DestCid->CID,
                         &Builder->SourceCid->CID,
                         Connection->Send.InitialTokenLength,
@@ -776,7 +789,8 @@ QuicPacketBuilderFinalize(
             Builder->HeaderLength);
     }
 
-    if (Builder->EncryptionOverhead != 0) {
+    if (Builder->EncryptionOverhead != 0 &&
+        !(Builder->Key->Type == QUIC_PACKET_KEY_1_RTT && Connection->Paths[0].EncryptionOffloading)) {
 
         //
         // Encrypt the data.
@@ -808,6 +822,11 @@ QuicPacketBuilderFinalize(
             QuicConnFatalError(Connection, Status, "Encryption failure");
             goto Exit;
         }
+
+        QuicTraceEvent(
+            PacketFinalize,
+            "[pack][%llu] Finalizing",
+            Builder->Metadata->PacketId);
 
         if (Connection->State.HeaderProtectionEnabled) {
 
@@ -895,6 +914,13 @@ QuicPacketBuilderFinalize(
             CXPLAT_DBG_ASSERT(Builder->Key->PacketKey != NULL);
             CXPLAT_DBG_ASSERT(Builder->Key->HeaderKey != NULL);
         }
+
+    } else {
+
+        QuicTraceEvent(
+            PacketFinalize,
+            "[pack][%llu] Finalizing",
+            Builder->Metadata->PacketId);
     }
 
     //
@@ -905,11 +931,7 @@ QuicPacketBuilderFinalize(
     Builder->Metadata->SentTime = CxPlatTimeUs32();
     Builder->Metadata->PacketLength =
         Builder->HeaderLength + PayloadLength;
-    QuicTraceEvent(
-        PacketFinalize,
-        "[pack][%llu] Finalizing",
-        Builder->Metadata->PacketId);
-
+    Builder->Metadata->Flags.EcnEctSet = Builder->EcnEctSet;
     QuicTraceEvent(
         ConnPacketSent,
         "[conn][%p][TX][%llu] %hhu (%hu bytes)",
@@ -945,11 +967,14 @@ Exit:
 
     if (FinalQuicPacket) {
         if (Builder->Datagram != NULL) {
+            if (Builder->Metadata->Flags.EcnEctSet) {
+                ++Connection->Send.NumPacketsSentWithEct;
+            }
             Builder->Datagram->Length = Builder->DatagramLength;
             Builder->Datagram = NULL;
-            Builder->DatagramLength = 0;
             ++Builder->TotalCountDatagrams;
             Builder->TotalDatagramsLength += Builder->DatagramLength;
+            Builder->DatagramLength = 0;
         }
 
         if (FlushBatchedDatagrams || CxPlatSendDataIsFull(Builder->SendData)) {
@@ -1011,8 +1036,7 @@ QuicPacketBuilderSendBatch(
         &Builder->Path->Route,
         Builder->SendData,
         Builder->TotalDatagramsLength,
-        Builder->TotalCountDatagrams,
-        Builder->Connection->Worker->IdealProcessor);
+        Builder->TotalCountDatagrams);
 
     Builder->PacketBatchSent = TRUE;
     Builder->SendData = NULL;

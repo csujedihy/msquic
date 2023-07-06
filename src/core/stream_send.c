@@ -117,6 +117,11 @@ QuicStreamSendShutdown(
         goto Exit;
     }
 
+    //
+    // No longer app limited since the app can't send anyways.
+    //
+    QuicStreamRemoveOutFlowBlockedReason(Stream, QUIC_FLOW_BLOCKED_APP);
+
     CxPlatDispatchLockAcquire(&Stream->ApiSendRequestLock);
     Stream->Flags.SendEnabled = FALSE;
     QUIC_SEND_REQUEST* ApiSendRequests = Stream->ApiSendRequests;
@@ -155,6 +160,13 @@ QuicStreamSendShutdown(
             DelaySend);
 
     } else {
+
+        //
+        // Can't be blocked by (stream) FC any more if we've aborted sending any
+        // more.
+        //
+        QuicStreamRemoveOutFlowBlockedReason(
+            Stream, QUIC_FLOW_BLOCKED_STREAM_FLOW_CONTROL);
 
         //
         // Make sure to deliver all send request cancelled callbacks first.
@@ -239,10 +251,6 @@ Exit:
     }
 }
 
-//
-// Returns TRUE if the peer has indicated the stream ID is allowed to be used
-// yet.
-//
 BOOLEAN
 QuicStreamAllowedByPeer(
     _In_ const QUIC_STREAM* Stream
@@ -376,6 +384,10 @@ QuicStreamCompleteSendRequest(
         CXPLAT_DBG_ASSERT(
             Stream->SendBufferBookmark == NULL ||
             !(Stream->SendBufferBookmark->Flags & QUIC_SEND_FLAG_BUFFERED));
+    }
+
+    if (SendRequest->Flags & QUIC_SEND_FLAG_START && !Stream->Flags.Started) {
+        QuicStreamIndicateStartComplete(Stream, QUIC_STATUS_ABORTED);
     }
 
     if (!(SendRequest->Flags & QUIC_SEND_FLAG_BUFFERED)) {
@@ -517,8 +529,7 @@ QuicStreamSendFlush(
         // Queue up the send request.
         //
 
-        QuicStreamRemoveOutFlowBlockedReason(
-            Stream, QUIC_FLOW_BLOCKED_APP);
+        QuicStreamRemoveOutFlowBlockedReason(Stream, QUIC_FLOW_BLOCKED_APP);
 
         SendRequest->StreamOffset = Stream->QueuedSendOffset;
         Stream->QueuedSendOffset += SendRequest->TotalLength;
@@ -598,7 +609,7 @@ QuicStreamSendFlush(
     if (Start) {
         (void)QuicStreamStart(
             Stream,
-            QUIC_STREAM_START_FLAG_IMMEDIATE,
+            QUIC_STREAM_START_FLAG_IMMEDIATE | QUIC_STREAM_START_FLAG_SHUTDOWN_ON_FAIL,
             FALSE);
     }
 
@@ -941,7 +952,9 @@ QuicStreamWriteStreamFrames(
 
         CXPLAT_DBG_ASSERT(Right <= Stream->QueuedSendOffset);
         if (Right == Stream->QueuedSendOffset) {
-            QuicStreamAddOutFlowBlockedReason(Stream, QUIC_FLOW_BLOCKED_APP);
+            if (Stream->Flags.SendEnabled) {
+                QuicStreamAddOutFlowBlockedReason(Stream, QUIC_FLOW_BLOCKED_APP);
+            }
             ExitLoop = TRUE;
         }
 

@@ -8,9 +8,12 @@ usage()
 
 OS=$(uname)
 ARCH=$(uname -m)
+PKGARCH=${ARCH}
 FPM=`which fpm` 2>/dev/null
 CONFIG=Release
 NAME=libmsquic
+TLS=openssl
+TLSVERSION=1.1
 CONFLICTS=
 DESCRIPTION="Microsoft implementation of the IETF QUIC protocol"
 VENDOR="Microsoft"
@@ -31,8 +34,16 @@ if [ "$OS" == 'Linux' ]; then
         ARCH='x64'
         LIBDIR="lib64"
     else
-        ARCH=x86
         LIBDIR="lib"
+        if [ "$ARCH" == "aarch64" ]; then
+            ARCH=arm64
+        else
+            if [ "$ARCH" == "armv7l" ]; then
+                ARCH=arm
+            else
+                ARCH=x86
+            fi
+        fi
     fi
 else
   if [ "$OS" == 'Darwin' ]; then
@@ -53,16 +64,40 @@ while :; do
 
     lowerI="$(echo $1 | tr "[:upper:]" "[:lower:]")"
     case $lowerI in
+        -a|-arch|--arch)
+            shift
+            ARCH=$1
+            if [ "$ARCH" == 'arm64' ]; then
+                PKGARCH=aarch64
+            fi
+            if [ "$ARCH" == 'arm' ]; then
+                PKGARCH=armhf
+            fi
+            ;;
         -d|-debug|--debug)
             CONFIG=Debug
             ;;
-        -config|--config)
+        -c|-config|--config)
             shift
             CONFIG=$1
             ;;
         -o|-output|--output)
             shift
             OUTPUT=$1
+            ;;
+        -t|-tls|--tls)
+            shift
+            TLS=$1
+            case $TLS in
+                'openssl')
+                    ;;
+                'openssl3')
+                    TLSVERSION=3
+                    ;;
+                *)
+                    echo "Unknown TLS version '$TLS'."
+                    exit 1
+            esac
             ;;
        -\?|-h|--help)
             usage
@@ -83,30 +118,35 @@ else
   CONFLICTS='libmsquic-debug'
 fi
 
-ARTIFACTS="artifacts/bin/${OS}/${ARCH}_${CONFIG}_openssl"
+ARTIFACTS="artifacts/bin/${OS}/${ARCH}_${CONFIG}_${TLS}"
 
 if [ -z ${OUTPUT} ]; then
-    OUTPUT="artifacts/packages/${OS}/${ARCH}_${CONFIG}_openssl"
+    OUTPUT="artifacts/packages/${OS}/${ARCH}_${CONFIG}_${TLS}"
 fi
+
+echo "ARCH=$ARCH PKGARCH=$PKGARCH ARTIFACTS=$ARTIFACTS"
 
 mkdir -p ${OUTPUT}
 
 if [ "$OS" == "linux" ]; then
-  # Create symlink
-  ln -s "${ARTIFACTS}/libmsquic.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}" "${ARTIFACTS}/libmsquic.${LIBEXT}.${VER_MAJOR}"
-
   # RedHat/CentOS
   FILES="${ARTIFACTS}/libmsquic.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}=/usr/${LIBDIR}/libmsquic.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}"
   FILES="${FILES} ${ARTIFACTS}/libmsquic.${LIBEXT}.${VER_MAJOR}=/usr/${LIBDIR}/libmsquic.${LIBEXT}.${VER_MAJOR}"
   if [ -e "$ARTIFACTS/libmsquic.lttng.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}" ]; then
      FILES="${FILES} ${ARTIFACTS}/libmsquic.lttng.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}=/usr/${LIBDIR}/libmsquic.lttng.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}"
   fi
+  if [ "$PKGARCH" == 'aarch64' ] || [ "$PKGARCH" == 'x86_64' ]; then
+      BITS='64bit'
+  fi
   fpm \
     --force \
     --input-type dir \
     --output-type rpm \
+    --architecture ${PKGARCH} \
     --name ${NAME} \
     --provides ${NAME} \
+    --depends "libcrypto.so.${TLSVERSION}()(${BITS})" \
+    --depends "libnuma.so.1()(${BITS})" \
     --conflicts ${CONFLICTS} \
     --version ${VER_MAJOR}.${VER_MINOR}.${VER_PATCH} \
     --description "${DESCRIPTION}" \
@@ -119,9 +159,16 @@ if [ "$OS" == "linux" ]; then
     ${FILES}
 
   # Debian/Ubuntu
-  if [ "$LIBDIR" == 'lib64' ]; then
+  if [ "$ARCH" == 'x64' ]; then
       LIBDIR="lib/x86_64-linux-gnu"
   fi
+  if [ "$ARCH" == 'arm64' ];then
+    LIBDIR="lib/aarch64-linux-gnu"
+  fi
+  if [ "$ARCH" == 'arm' ];then
+    LIBDIR="lib/arm-linux-gnueabihf"
+  fi
+
   FILES="${ARTIFACTS}/libmsquic.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}=/usr/${LIBDIR}/libmsquic.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}"
   FILES="${FILES} ${ARTIFACTS}/libmsquic.${LIBEXT}.${VER_MAJOR}=/usr/${LIBDIR}/libmsquic.${LIBEXT}.${VER_MAJOR}"
   if [ -e "$ARTIFACTS/libmsquic.lttng.${LIBEXT}.${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}" ]; then
@@ -131,9 +178,12 @@ if [ "$OS" == "linux" ]; then
     --force \
     --input-type dir \
     --output-type deb \
+    --architecture ${PKGARCH} \
     --name ${NAME} \
     --provides ${NAME} \
     --conflicts ${CONFLICTS} \
+    --depends "libssl${TLSVERSION}" \
+    --depends "libnuma1" \
     --version ${VER_MAJOR}.${VER_MINOR}.${VER_PATCH} \
     --description "${DESCRIPTION}" \
     --vendor "${VENDOR}" \

@@ -32,7 +32,7 @@ Supported Platforms:
 #include "msquic_winkernel.h"
 #elif _WIN32
 #include "msquic_winuser.h"
-#elif __linux__ || __APPLE__
+#elif __linux__ || __APPLE__ || __FreeBSD__
 #include "msquic_posix.h"
 #else
 #error "Unsupported Platform"
@@ -70,6 +70,11 @@ typedef _In_range_(0, QUIC_UINT62_MAX) uint64_t QUIC_UINT62;
 //
 #define QUIC_MAX_RESUMPTION_APP_DATA_LENGTH     1000
 
+typedef enum QUIC_TLS_PROVIDER {
+    QUIC_TLS_PROVIDER_SCHANNEL                  = 0x0000,
+    QUIC_TLS_PROVIDER_OPENSSL                   = 0x0001,
+} QUIC_TLS_PROVIDER;
+
 typedef enum QUIC_EXECUTION_PROFILE {
     QUIC_EXECUTION_PROFILE_LOW_LATENCY,         // Default
     QUIC_EXECUTION_PROFILE_TYPE_MAX_THROUGHPUT,
@@ -80,7 +85,28 @@ typedef enum QUIC_EXECUTION_PROFILE {
 typedef enum QUIC_LOAD_BALANCING_MODE {
     QUIC_LOAD_BALANCING_DISABLED,               // Default
     QUIC_LOAD_BALANCING_SERVER_ID_IP,           // Encodes IP address in Server ID
+    QUIC_LOAD_BALANCING_SERVER_ID_FIXED,        // Encodes a fixed 4-byte value in Server ID
+    QUIC_LOAD_BALANCING_COUNT,                  // The number of supported load balancing modes
+                                                // MUST BE LAST
 } QUIC_LOAD_BALANCING_MODE;
+
+typedef enum QUIC_TLS_ALERT_CODES {
+    QUIC_TLS_ALERT_CODE_SUCCESS = 0xFFFF,       // Not a real TlsAlert
+    QUIC_TLS_ALERT_CODE_UNEXPECTED_MESSAGE = 10,
+    QUIC_TLS_ALERT_CODE_BAD_CERTIFICATE = 42,
+    QUIC_TLS_ALERT_CODE_UNSUPPORTED_CERTIFICATE = 43,
+    QUIC_TLS_ALERT_CODE_CERTIFICATE_REVOKED = 44,
+    QUIC_TLS_ALERT_CODE_CERTIFICATE_EXPIRED = 45,
+    QUIC_TLS_ALERT_CODE_CERTIFICATE_UNKNOWN = 46,
+    QUIC_TLS_ALERT_CODE_ILLEGAL_PARAMETER = 47,
+    QUIC_TLS_ALERT_CODE_UNKNOWN_CA = 48,
+    QUIC_TLS_ALERT_CODE_ACCESS_DENIED = 49,
+    QUIC_TLS_ALERT_CODE_INSUFFICIENT_SECURITY = 71,
+    QUIC_TLS_ALERT_CODE_INTERNAL_ERROR = 80,
+    QUIC_TLS_ALERT_CODE_USER_CANCELED = 90,
+    QUIC_TLS_ALERT_CODE_CERTIFICATE_REQUIRED = 116,
+    QUIC_TLS_ALERT_CODE_MAX = 255,
+} QUIC_TLS_ALERT_CODES;
 
 typedef enum QUIC_CREDENTIAL_TYPE {
     QUIC_CREDENTIAL_TYPE_NONE,
@@ -99,8 +125,8 @@ typedef enum QUIC_CREDENTIAL_FLAGS {
     QUIC_CREDENTIAL_FLAG_NO_CERTIFICATE_VALIDATION              = 0x00000004,
     QUIC_CREDENTIAL_FLAG_ENABLE_OCSP                            = 0x00000008, // Schannel only currently
     QUIC_CREDENTIAL_FLAG_INDICATE_CERTIFICATE_RECEIVED          = 0x00000010,
-    QUIC_CREDENTIAL_FLAG_DEFER_CERTIFICATE_VALIDATION           = 0x00000020, // Schannel only currently
-    QUIC_CREDENTIAL_FLAG_REQUIRE_CLIENT_AUTHENTICATION          = 0x00000040, // Schannel only currently
+    QUIC_CREDENTIAL_FLAG_DEFER_CERTIFICATE_VALIDATION           = 0x00000020,
+    QUIC_CREDENTIAL_FLAG_REQUIRE_CLIENT_AUTHENTICATION          = 0x00000040,
     QUIC_CREDENTIAL_FLAG_USE_TLS_BUILTIN_CERTIFICATE_VALIDATION = 0x00000080, // OpenSSL only currently
     QUIC_CREDENTIAL_FLAG_REVOCATION_CHECK_END_CERT              = 0x00000100, // Schannel only currently
     QUIC_CREDENTIAL_FLAG_REVOCATION_CHECK_CHAIN                 = 0x00000200, // Schannel only currently
@@ -109,7 +135,12 @@ typedef enum QUIC_CREDENTIAL_FLAGS {
     QUIC_CREDENTIAL_FLAG_IGNORE_REVOCATION_OFFLINE              = 0x00001000, // Schannel only currently
     QUIC_CREDENTIAL_FLAG_SET_ALLOWED_CIPHER_SUITES              = 0x00002000,
     QUIC_CREDENTIAL_FLAG_USE_PORTABLE_CERTIFICATES              = 0x00004000,
-    QUIC_CREDENTIAL_FLAG_USE_SUPPLIED_CREDENTIALS               = 0x00008000, // Schannel only currently
+    QUIC_CREDENTIAL_FLAG_USE_SUPPLIED_CREDENTIALS               = 0x00008000, // Schannel only
+    QUIC_CREDENTIAL_FLAG_USE_SYSTEM_MAPPER                      = 0x00010000, // Schannel only
+    QUIC_CREDENTIAL_FLAG_CACHE_ONLY_URL_RETRIEVAL               = 0x00020000, // Windows only currently
+    QUIC_CREDENTIAL_FLAG_REVOCATION_CHECK_CACHE_ONLY            = 0x00040000, // Windows only currently
+    QUIC_CREDENTIAL_FLAG_INPROC_PEER_CERTIFICATE                = 0x00080000, // Schannel only
+    QUIC_CREDENTIAL_FLAG_SET_CA_CERTIFICATE_FILE                = 0x00100000, // OpenSSL only currently
 } QUIC_CREDENTIAL_FLAGS;
 
 DEFINE_ENUM_FLAG_OPERATORS(QUIC_CREDENTIAL_FLAGS)
@@ -160,6 +191,8 @@ typedef enum QUIC_STREAM_OPEN_FLAGS {
     QUIC_STREAM_OPEN_FLAG_NONE              = 0x0000,
     QUIC_STREAM_OPEN_FLAG_UNIDIRECTIONAL    = 0x0001,   // Indicates the stream is unidirectional.
     QUIC_STREAM_OPEN_FLAG_0_RTT             = 0x0002,   // The stream was opened via a 0-RTT packet.
+    QUIC_STREAM_OPEN_FLAG_DELAY_ID_FC_UPDATES = 0x0004, // Indicates stream ID flow control limit updates for the
+                                                        // connection should be delayed to StreamClose.
 } QUIC_STREAM_OPEN_FLAGS;
 
 DEFINE_ENUM_FLAG_OPERATORS(QUIC_STREAM_OPEN_FLAGS)
@@ -223,6 +256,31 @@ typedef enum QUIC_DATAGRAM_SEND_STATE {
 #define QUIC_DATAGRAM_SEND_STATE_IS_FINAL(State) \
     ((State) >= QUIC_DATAGRAM_SEND_LOST_DISCARDED)
 
+typedef enum QUIC_EXECUTION_CONFIG_FLAGS {
+    QUIC_EXECUTION_CONFIG_FLAG_NONE             = 0x0000,
+#ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
+    QUIC_EXECUTION_CONFIG_FLAG_QTIP             = 0x0001,
+    QUIC_EXECUTION_CONFIG_FLAG_RIO              = 0x0002,
+#endif
+} QUIC_EXECUTION_CONFIG_FLAGS;
+
+DEFINE_ENUM_FLAG_OPERATORS(QUIC_EXECUTION_CONFIG_FLAGS)
+
+//
+// A custom configuration for thread execution in QUIC.
+//
+typedef struct QUIC_EXECUTION_CONFIG {
+
+    QUIC_EXECUTION_CONFIG_FLAGS Flags;
+    uint32_t PollingIdleTimeoutUs;      // Time before a polling thread, with no work to do, sleeps.
+    uint32_t ProcessorCount;
+    _Field_size_(ProcessorCount)
+    uint16_t ProcessorList[1];          // List of processors to use for threads.
+
+} QUIC_EXECUTION_CONFIG;
+
+#define QUIC_EXECUTION_CONFIG_MIN_SIZE \
+    (uint32_t)FIELD_OFFSET(QUIC_EXECUTION_CONFIG, ProcessorList)
 
 typedef struct QUIC_REGISTRATION_CONFIG { // All fields may be NULL/zero.
     const char* AppName;
@@ -286,6 +344,7 @@ typedef struct QUIC_CREDENTIAL_CONFIG {
     void* Reserved; // Currently unused
     QUIC_CREDENTIAL_LOAD_COMPLETE_HANDLER AsyncHandler; // Optional
     QUIC_ALLOWED_CIPHER_SUITE_FLAGS AllowedCipherSuites;// Optional
+    const char* CaCertificateFile;                      // Optional
 } QUIC_CREDENTIAL_CONFIG;
 
 //
@@ -362,6 +421,9 @@ typedef enum QUIC_CIPHER_SUITE {
 
 typedef enum QUIC_CONGESTION_CONTROL_ALGORITHM {
     QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC,
+#ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
+    QUIC_CONGESTION_CONTROL_ALGORITHM_BBR,
+#endif
     QUIC_CONGESTION_CONTROL_ALGORITHM_MAX,
 } QUIC_CONGESTION_CONTROL_ALGORITHM;
 
@@ -427,6 +489,11 @@ typedef struct QUIC_STATISTICS {
     } Misc;
 } QUIC_STATISTICS;
 
+//
+// N.B. Consumers of this struct depend on it being the same for 32-bit and
+// 64-bit systems. DO NOT include any fields that have different sizes on those
+// platforms, such as size_t or pointers.
+//
 typedef struct QUIC_STATISTICS_V2 {
 
     uint64_t CorrelationId;
@@ -434,6 +501,10 @@ typedef struct QUIC_STATISTICS_V2 {
     uint32_t StatelessRetry         : 1;
     uint32_t ResumptionAttempted    : 1;
     uint32_t ResumptionSucceeded    : 1;
+    uint32_t GreaseBitNegotiated    : 1;    // Set if we negotiated the GREASE bit.
+    uint32_t EcnCapable             : 1;
+    uint32_t EncryptionOffloaded    : 1;    // At least one path successfully offloaded encryption
+    uint32_t RESERVED               : 25;
     uint32_t Rtt;                           // In microseconds
     uint32_t MinRtt;                        // In microseconds
     uint32_t MaxRtt;                        // In microseconds
@@ -469,9 +540,20 @@ typedef struct QUIC_STATISTICS_V2 {
 
     uint32_t SendCongestionWindow;          // Congestion window size
 
+    uint32_t DestCidUpdateCount;            // Number of times the destionation CID changed.
+
+    uint32_t SendEcnCongestionCount;        // Number of congestion events caused by ECN.
+
     // N.B. New fields must be appended to end
 
 } QUIC_STATISTICS_V2;
+
+#define QUIC_STRUCT_SIZE_THRU_FIELD(Struct, Field) \
+    (FIELD_OFFSET(Struct, Field) + sizeof(((Struct*)0)->Field))
+
+#define QUIC_STATISTICS_V2_SIZE_1   QUIC_STRUCT_SIZE_THRU_FIELD(QUIC_STATISTICS_V2, KeyUpdateCount)         // v2.0 final size
+#define QUIC_STATISTICS_V2_SIZE_2   QUIC_STRUCT_SIZE_THRU_FIELD(QUIC_STATISTICS_V2, DestCidUpdateCount)     // v2.1 final size
+#define QUIC_STATISTICS_V2_SIZE_3   QUIC_STRUCT_SIZE_THRU_FIELD(QUIC_STATISTICS_V2, SendEcnCongestionCount) // v2.2 final size
 
 typedef struct QUIC_LISTENER_STATISTICS {
 
@@ -520,9 +602,9 @@ typedef enum QUIC_PERFORMANCE_COUNTERS {
 #ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
 typedef struct QUIC_VERSION_SETTINGS {
 
-    uint32_t* AcceptableVersions;
-    uint32_t* OfferedVersions;
-    uint32_t* FullyDeployedVersions;
+    const uint32_t* AcceptableVersions;
+    const uint32_t* OfferedVersions;
+    const uint32_t* FullyDeployedVersions;
     uint32_t AcceptableVersionsLength;
     uint32_t OfferedVersionsLength;
     uint32_t FullyDeployedVersionsLength;
@@ -536,11 +618,13 @@ typedef struct QUIC_GLOBAL_SETTINGS {
         struct {
             uint64_t RetryMemoryLimit                       : 1;
             uint64_t LoadBalancingMode                      : 1;
-            uint64_t RESERVED                               : 62;
+            uint64_t FixedServerID                          : 1;
+            uint64_t RESERVED                               : 61;
         } IsSet;
     };
     uint16_t RetryMemoryLimit;
     uint16_t LoadBalancingMode;
+    uint32_t FixedServerID;
 } QUIC_GLOBAL_SETTINGS;
 
 typedef struct QUIC_SETTINGS {
@@ -579,7 +663,16 @@ typedef struct QUIC_SETTINGS {
             uint64_t ServerResumptionLevel                  : 1;
             uint64_t MaxOperationsPerDrain                  : 1;
             uint64_t MtuDiscoveryMissingProbeCount          : 1;
-            uint64_t RESERVED                               : 33;
+            uint64_t DestCidUpdateIdleTimeoutMs             : 1;
+            uint64_t GreaseQuicBitEnabled                   : 1;
+            uint64_t EcnEnabled                             : 1;
+            uint64_t HyStartEnabled                         : 1;
+#ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
+            uint64_t EncryptionOffloadAllowed               : 1;
+            uint64_t RESERVED                               : 28;
+#else
+            uint64_t RESERVED                               : 29;
+#endif
         } IsSet;
     };
 
@@ -612,9 +705,23 @@ typedef struct QUIC_SETTINGS {
     uint8_t MigrationEnabled                : 1;
     uint8_t DatagramReceiveEnabled          : 1;
     uint8_t ServerResumptionLevel           : 2;    // QUIC_SERVER_RESUMPTION_LEVEL
-    uint8_t RESERVED                        : 2;
+    uint8_t GreaseQuicBitEnabled            : 1;
+    uint8_t EcnEnabled                      : 1;
     uint8_t MaxOperationsPerDrain;
     uint8_t MtuDiscoveryMissingProbeCount;
+    uint32_t DestCidUpdateIdleTimeoutMs;
+    union {
+        uint64_t Flags;
+        struct {
+            uint64_t HyStartEnabled            : 1;
+#ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
+            uint64_t EncryptionOffloadAllowed  : 1;
+            uint64_t ReservedFlags             : 62;
+#else
+            uint64_t ReservedFlags             : 63;
+#endif
+        };
+    };
 
 } QUIC_SETTINGS;
 
@@ -641,6 +748,17 @@ typedef struct QUIC_TLS_SECRETS {
     uint8_t ClientTrafficSecret0[QUIC_TLS_SECRETS_MAX_SECRET_LEN];
     uint8_t ServerTrafficSecret0[QUIC_TLS_SECRETS_MAX_SECRET_LEN];
 } QUIC_TLS_SECRETS;
+
+typedef struct QUIC_STREAM_STATISTICS {
+    uint64_t ConnBlockedBySchedulingUs;
+    uint64_t ConnBlockedByPacingUs;
+    uint64_t ConnBlockedByAmplificationProtUs;
+    uint64_t ConnBlockedByCongestionControlUs;
+    uint64_t ConnBlockedByFlowControlUs;
+    uint64_t StreamBlockedByIdFlowControlUs;
+    uint64_t StreamBlockedByFlowControlUs;
+    uint64_t StreamBlockedByAppUs;
+} QUIC_STREAM_STATISTICS;
 
 //
 // Functions for associating application contexts with QUIC handles. MsQuic
@@ -706,7 +824,10 @@ void
 #define QUIC_PARAM_GLOBAL_VERSION_SETTINGS              0x01000007  // QUIC_VERSION_SETTINGS
 #endif
 #define QUIC_PARAM_GLOBAL_LIBRARY_GIT_HASH              0x01000008  // char[64]
-#define QUIC_PARAM_GLOBAL_DATAPATH_PROCESSORS           0x01000009  // uint16_t[]
+#ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
+#define QUIC_PARAM_GLOBAL_EXECUTION_CONFIG              0x01000009  // QUIC_EXECUTION_CONFIG
+#endif
+#define QUIC_PARAM_GLOBAL_TLS_PROVIDER                  0x0100000A  // QUIC_TLS_PROVIDER
 
 //
 // Parameters for Registration.
@@ -720,6 +841,13 @@ void
 #ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
 #define QUIC_PARAM_CONFIGURATION_VERSION_SETTINGS       0x03000002  // QUIC_VERSION_SETTINGS
 #endif
+// Schannel-specific Configuration parameter
+typedef struct QUIC_SCHANNEL_CREDENTIAL_ATTRIBUTE_W {
+    unsigned long Attribute;
+    unsigned long BufferLength;
+    void* Buffer;
+} QUIC_SCHANNEL_CREDENTIAL_ATTRIBUTE_W;
+#define QUIC_PARAM_CONFIGURATION_SCHANNEL_CREDENTIAL_ATTRIBUTE_W  0x03000003  // QUIC_SCHANNEL_CREDENTIAL_ATTRIBUTE_W
 
 //
 // Parameters for Listener.
@@ -774,6 +902,13 @@ typedef struct QUIC_SCHANNEL_CONTEXT_ATTRIBUTE_W {
     void* Buffer;
 } QUIC_SCHANNEL_CONTEXT_ATTRIBUTE_W;
 #define QUIC_PARAM_TLS_SCHANNEL_CONTEXT_ATTRIBUTE_W     0x07000000  // QUIC_SCHANNEL_CONTEXT_ATTRIBUTE_W
+typedef struct QUIC_SCHANNEL_CONTEXT_ATTRIBUTE_EX_W {
+    unsigned long Attribute;
+    unsigned long BufferLength;
+    void* Buffer;
+} QUIC_SCHANNEL_CONTEXT_ATTRIBUTE_EX_W;
+#define QUIC_PARAM_TLS_SCHANNEL_CONTEXT_ATTRIBUTE_EX_W  0x07000001  // QUIC_SCHANNEL_CONTEXT_ATTRIBUTE_EX_W
+#define QUIC_PARAM_TLS_SCHANNEL_SECURITY_CONTEXT_TOKEN  0x07000002  // HANDLE
 #endif
 
 //
@@ -783,6 +918,7 @@ typedef struct QUIC_SCHANNEL_CONTEXT_ATTRIBUTE_W {
 #define QUIC_PARAM_STREAM_0RTT_LENGTH                   0x08000001  // uint64_t
 #define QUIC_PARAM_STREAM_IDEAL_SEND_BUFFER_SIZE        0x08000002  // uint64_t - bytes
 #define QUIC_PARAM_STREAM_PRIORITY                      0x08000003  // uint16_t - 0 (low) to 0xFFFF (high) - 0x7FFF (default)
+#define QUIC_PARAM_STREAM_STATISTICS                    0X08000004  // QUIC_STREAM_STATISTICS
 
 typedef
 _IRQL_requires_max_(PASSIVE_LEVEL)
@@ -1017,6 +1153,7 @@ typedef struct QUIC_CONNECTION_EVENT {
         } CONNECTED;
         struct {
             QUIC_STATUS Status;
+            QUIC_UINT62 ErrorCode; // Wire format error code.
         } SHUTDOWN_INITIATED_BY_TRANSPORT;
         struct {
             QUIC_UINT62 ErrorCode;
@@ -1040,6 +1177,9 @@ typedef struct QUIC_CONNECTION_EVENT {
             uint16_t BidirectionalCount;
             uint16_t UnidirectionalCount;
         } STREAMS_AVAILABLE;
+        struct {
+            BOOLEAN Bidirectional;
+        } PEER_NEEDS_STREAMS;
         struct {
             uint16_t IdealProcessor;
         } IDEAL_PROCESSOR_CHANGED;
@@ -1170,6 +1310,34 @@ QUIC_STATUS
     );
 
 //
+// Uses the QUIC (server) handle to complete resumption ticket validation.
+// This must be called after server app handles ticket validation and then
+// return QUIC_STATUS_PENDING.
+//
+typedef
+_IRQL_requires_max_(DISPATCH_LEVEL)
+QUIC_STATUS
+(QUIC_API * QUIC_CONNECTION_COMP_RESUMPTION_FN)(
+    _In_ _Pre_defensive_ HQUIC Connection,
+    _In_ BOOLEAN Result
+    );
+
+//
+// Uses the QUIC (client) handle to complete certificate validation.
+// This must be called after client app handles certificate validation
+// and then return QUIC_STATUS_PENDING. The TlsAlert value is ignored if Result
+// equals TRUE (recommend just pass QUIC_TLS_ALERT_CODE_SUCCESS).
+//
+typedef
+_IRQL_requires_max_(DISPATCH_LEVEL)
+QUIC_STATUS
+(QUIC_API * QUIC_CONNECTION_COMP_CERT_FN)(
+    _In_ _Pre_defensive_ HQUIC Connection,
+    _In_ BOOLEAN Result,
+    _In_ QUIC_TLS_ALERT_CODES TlsAlert
+    );
+
+//
 // Streams
 //
 
@@ -1200,7 +1368,7 @@ typedef struct QUIC_STREAM_EVENT {
             /* inout */ uint64_t TotalBufferLength;
             _Field_size_(BufferCount)
             /* in */    const QUIC_BUFFER* Buffers;
-            _Field_range_(1, UINT32_MAX)
+            _Field_range_(0, UINT32_MAX)
             /* in */    uint32_t BufferCount;
             /* in */    QUIC_RECEIVE_FLAGS Flags;
         } RECEIVE;
@@ -1219,8 +1387,12 @@ typedef struct QUIC_STREAM_EVENT {
         } SEND_SHUTDOWN_COMPLETE;
         struct {
             BOOLEAN ConnectionShutdown;
-            BOOLEAN AppCloseInProgress  : 1;
-            BOOLEAN RESERVED            : 7;
+            BOOLEAN AppCloseInProgress       : 1;
+            BOOLEAN ConnectionShutdownByApp  : 1;
+            BOOLEAN ConnectionClosedRemotely : 1;
+            BOOLEAN RESERVED                 : 5;
+            QUIC_UINT62 ConnectionErrorCode;
+            QUIC_STATUS ConnectionCloseStatus;
         } SHUTDOWN_COMPLETE;
         struct {
             uint64_t ByteCount;
@@ -1391,6 +1563,9 @@ typedef struct QUIC_API_TABLE {
     QUIC_STREAM_RECEIVE_SET_ENABLED_FN  StreamReceiveSetEnabled;
 
     QUIC_DATAGRAM_SEND_FN               DatagramSend;
+
+    QUIC_CONNECTION_COMP_RESUMPTION_FN  ConnectionResumptionTicketValidationComplete; // Available from v2.2
+    QUIC_CONNECTION_COMP_CERT_FN        ConnectionCertificateValidationComplete;      // Available from v2.2
 
 } QUIC_API_TABLE;
 

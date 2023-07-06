@@ -42,7 +42,9 @@ QuicSendUninitialize(
     _In_ QUIC_SEND* Send
     )
 {
+    Send->Uninitialized = TRUE;
     Send->DelayedAckTimerActive = FALSE;
+    Send->SendFlags = 0;
 
     if (Send->InitialToken != NULL) {
         CXPLAT_FREE(Send->InitialToken, QUIC_POOL_INITIAL_TOKEN);
@@ -215,6 +217,10 @@ QuicSendValidate(
     _In_ QUIC_SEND* Send
     )
 {
+    if (Send->Uninitialized) {
+        return;
+    }
+
     QUIC_CONNECTION* Connection = QuicSendGetConnection(Send);
 
     BOOLEAN HasAckElicitingPacketsToAcknowledge = FALSE;
@@ -673,6 +679,52 @@ QuicSendWriteFrames(
             }
         }
 
+        if (Send->SendFlags & QUIC_CONN_SEND_FLAG_BIDI_STREAMS_BLOCKED) {
+
+            uint64_t Mask = QuicConnIsServer(Connection) | STREAM_ID_FLAG_IS_BI_DIR;
+
+            QUIC_STREAMS_BLOCKED_EX Frame = {
+                TRUE,
+                Connection->Streams.Types[Mask].MaxTotalStreamCount
+            };
+
+            if (QuicStreamsBlockedFrameEncode(
+                    &Frame,
+                    &Builder->DatagramLength,
+                    AvailableBufferLength,
+                    Builder->Datagram->Buffer)) {
+                Send->SendFlags &= ~QUIC_CONN_SEND_FLAG_BIDI_STREAMS_BLOCKED;
+                if (QuicPacketBuilderAddFrame(Builder, QUIC_FRAME_STREAMS_BLOCKED, TRUE)) {
+                    return TRUE;
+                }
+            } else {
+                RanOutOfRoom = TRUE;
+            }
+        }
+
+        if (Send->SendFlags & QUIC_CONN_SEND_FLAG_UNI_STREAMS_BLOCKED) {
+
+            uint64_t Mask = QuicConnIsServer(Connection) | STREAM_ID_FLAG_IS_UNI_DIR;
+
+            QUIC_STREAMS_BLOCKED_EX Frame = {
+                FALSE,
+                Connection->Streams.Types[Mask].MaxTotalStreamCount
+            };
+
+            if (QuicStreamsBlockedFrameEncode(
+                    &Frame,
+                    &Builder->DatagramLength,
+                    AvailableBufferLength,
+                    Builder->Datagram->Buffer)) {
+                Send->SendFlags &= ~QUIC_CONN_SEND_FLAG_UNI_STREAMS_BLOCKED;
+                if (QuicPacketBuilderAddFrame(Builder, QUIC_FRAME_STREAMS_BLOCKED_1, TRUE)) {
+                    return TRUE;
+                }
+            } else {
+                RanOutOfRoom = TRUE;
+            }
+        }
+
         if ((Send->SendFlags & QUIC_CONN_SEND_FLAG_MAX_STREAMS_UNI)) {
 
             QUIC_MAX_STREAMS_EX Frame = { FALSE };
@@ -976,6 +1028,8 @@ QuicSendPathChallenges(
     _In_ QUIC_SEND* Send
     )
 {
+#pragma warning(push)
+#pragma warning(disable:6001) // Using uninitialized memory
     QUIC_CONNECTION* Connection = QuicSendGetConnection(Send);
 
     CXPLAT_DBG_ASSERT(Connection->Crypto.TlsState.WriteKeys[QUIC_PACKET_KEY_1_RTT] != NULL);
@@ -987,6 +1041,38 @@ QuicSendPathChallenges(
             Connection->Paths[i].Allowance < QUIC_MIN_SEND_ALLOWANCE) {
             continue;
         }
+
+#ifdef QUIC_USE_RAW_DATAPATH
+        //
+        // Make sure the route is resolved before sending the path challenge.
+        //
+        // We need to set the path challenge flag back on so that when route is resolved,
+        // we know we need to continue to send the challenge.
+        //
+        CXPLAT_DBG_ASSERT(Path->Route.State != RouteSuspected);
+        if (Path->Route.State == RouteUnresolved) {
+            QuicConnAddRef(Connection, QUIC_CONN_REF_ROUTE);
+            QUIC_STATUS Status =
+                CxPlatResolveRoute(
+                    Path->Binding->Socket, &Path->Route, Path->ID, (void*)Connection, QuicConnQueueRouteCompletion);
+            if (Status == QUIC_STATUS_SUCCESS) {
+                QuicConnRelease(Connection, QUIC_CONN_REF_ROUTE);
+            } else {
+                //
+                // Route resolution failed or pended. We need to pause sending.
+                //
+                CXPLAT_DBG_ASSERT(Status == QUIC_STATUS_PENDING || QUIC_FAILED(Status));
+                Send->SendFlags |= QUIC_CONN_SEND_FLAG_PATH_CHALLENGE;
+                continue;
+            }
+        } else if (Path->Route.State == RouteResolving) {
+            //
+            // Can't send now. Once route resolution completes, we will resume sending.
+            //
+            Send->SendFlags |= QUIC_CONN_SEND_FLAG_PATH_CHALLENGE;
+            continue;
+        }
+#endif
 
         QUIC_PACKET_BUILDER Builder = { 0 };
         if (!QuicPacketBuilderInitialize(&Builder, Connection, Path)) {
@@ -1049,6 +1135,7 @@ QuicSendPathChallenges(
         QuicPacketBuilderFinalize(&Builder, TRUE);
         QuicPacketBuilderCleanup(&Builder);
     }
+#pragma warning(pop)
 }
 
 typedef enum QUIC_SEND_RESULT {
@@ -1107,7 +1194,8 @@ QuicSendFlush(
         return TRUE;
     }
 
-    QuicMtuDiscoveryCheckSearchCompleteTimeout(Connection, CxPlatTimeUs64());
+    uint64_t TimeNow = CxPlatTimeUs64();
+    QuicMtuDiscoveryCheckSearchCompleteTimeout(Connection, TimeNow);
 
     //
     // If path is active without being peer validated, disable MTU flag if set.
@@ -1118,6 +1206,15 @@ QuicSendFlush(
 
     if (Send->SendFlags == 0 && CxPlatListIsEmpty(&Send->SendStreams)) {
         return TRUE;
+    }
+
+    //
+    // Connection CID changes on idle state after an amount of time
+    //
+    if (Connection->Settings.DestCidUpdateIdleTimeoutMs != 0 &&
+        Send->LastFlushTimeValid &&
+        CxPlatTimeDiff64(Send->LastFlushTime, TimeNow) >= MS_TO_US(Connection->Settings.DestCidUpdateIdleTimeoutMs)) {
+        (void)QuicConnRetireCurrentDestCid(Connection, Path);
     }
 
     QUIC_SEND_RESULT Result = QUIC_SEND_INCOMPLETE;
@@ -1139,6 +1236,28 @@ QuicSendFlush(
         return TRUE;
     }
     _Analysis_assume_(Builder.Metadata != NULL);
+
+    if (Builder.Path->EcnValidationState == ECN_VALIDATION_CAPABLE) {
+        Builder.EcnEctSet = TRUE;
+    } else if (Builder.Path->EcnValidationState == ECN_VALIDATION_TESTING) {
+        if (Builder.Path->EcnTestingEndingTime != 0) {
+            if (!CxPlatTimeAtOrBefore64(TimeNow, Builder.Path->EcnTestingEndingTime)) {
+                Builder.Path->EcnValidationState = ECN_VALIDATION_UNKNOWN;
+                QuicTraceLogConnInfo(
+                    EcnValidationUnknown,
+                    Connection,
+                    "ECN unknown.");
+            }
+        } else {
+            uint32_t ThreePtosInUs =
+                QuicLossDetectionComputeProbeTimeout(
+                    &Connection->LossDetection,
+                    &Connection->Paths[0],
+                    QUIC_CLOSE_PTO_COUNT);
+            Builder.Path->EcnTestingEndingTime = TimeNow + ThreePtosInUs;
+        }
+        Builder.EcnEctSet = TRUE;
+    }
 
     QuicTraceEvent(
         ConnFlushSend,

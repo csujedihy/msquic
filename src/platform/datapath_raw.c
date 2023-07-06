@@ -108,72 +108,87 @@ CxPlatDataPathInitialize(
     _In_ uint32_t ClientRecvContextLength,
     _In_opt_ const CXPLAT_UDP_DATAPATH_CALLBACKS* UdpCallbacks,
     _In_opt_ const CXPLAT_TCP_DATAPATH_CALLBACKS* TcpCallbacks,
-    _In_opt_ CXPLAT_DATAPATH_CONFIG* Config,
+    _In_opt_ QUIC_EXECUTION_CONFIG* Config,
     _Out_ CXPLAT_DATAPATH** NewDataPath
     )
 {
     QUIC_STATUS Status = QUIC_STATUS_SUCCESS;
     const size_t DatapathSize = CxPlatDpRawGetDatapathSize(Config);
+    BOOLEAN DpRawInitialized = FALSE;
+    BOOLEAN SockPoolInitialized = FALSE;
     CXPLAT_FRE_ASSERT(DatapathSize > sizeof(CXPLAT_DATAPATH));
 
     UNREFERENCED_PARAMETER(TcpCallbacks);
 
     if (NewDataPath == NULL) {
-        Status = QUIC_STATUS_INVALID_PARAMETER;
-        goto Exit;
+        return QUIC_STATUS_INVALID_PARAMETER;
     }
     if (UdpCallbacks != NULL) {
         if (UdpCallbacks->Receive == NULL || UdpCallbacks->Unreachable == NULL) {
-            Status = QUIC_STATUS_INVALID_PARAMETER;
-            goto Exit;
+            return QUIC_STATUS_INVALID_PARAMETER;
         }
     }
 
-    *NewDataPath = CXPLAT_ALLOC_PAGED(DatapathSize, QUIC_POOL_DATAPATH);
-    if (*NewDataPath == NULL) {
+    if (!CxPlatWorkersLazyStart(Config)) {
+        return QUIC_STATUS_OUT_OF_MEMORY;
+    }
+
+    CXPLAT_DATAPATH* DataPath = CXPLAT_ALLOC_PAGED(DatapathSize, QUIC_POOL_DATAPATH);
+    if (DataPath == NULL) {
         QuicTraceEvent(
             AllocFailure,
             "Allocation of '%s' failed. (%llu bytes)",
             "CXPLAT_DATAPATH",
             DatapathSize);
-        Status = QUIC_STATUS_OUT_OF_MEMORY;
-        goto Error;
+        return QUIC_STATUS_OUT_OF_MEMORY;
     }
-    CxPlatZeroMemory(*NewDataPath, DatapathSize);
+    CxPlatZeroMemory(DataPath, DatapathSize);
+    CXPLAT_FRE_ASSERT(CxPlatRundownAcquire(&CxPlatWorkerRundown));
 
     if (UdpCallbacks) {
-        (*NewDataPath)->UdpHandlers = *UdpCallbacks;
+        DataPath->UdpHandlers = *UdpCallbacks;
     }
 
-    CxPlatRundownInitialize(&(*NewDataPath)->SocketsRundown);
+    if (Config && (Config->Flags & QUIC_EXECUTION_CONFIG_FLAG_QTIP)) {
+        DataPath->UseTcp = TRUE;
+    }
 
-    if (!CxPlatSockPoolInitialize(&(*NewDataPath)->SocketPool)) {
+    if (!CxPlatSockPoolInitialize(&DataPath->SocketPool)) {
         Status = QUIC_STATUS_OUT_OF_MEMORY;
         goto Error;
     }
+    SockPoolInitialized = TRUE;
 
-    Status = CxPlatDpRawInitialize(*NewDataPath, ClientRecvContextLength, Config);
-    if (QUIC_FAILED(Status)) {
-        CxPlatSockPoolUninitialize(&(*NewDataPath)->SocketPool);
-        goto Error;
-    }
-
-    Status = CxPlatDataPathRouteWorkerInitialize(*NewDataPath);
+    Status = CxPlatDpRawInitialize(DataPath, ClientRecvContextLength, Config);
     if (QUIC_FAILED(Status)) {
         goto Error;
     }
+    DpRawInitialized = TRUE;
+
+    Status = CxPlatDataPathRouteWorkerInitialize(DataPath);
+    if (QUIC_FAILED(Status)) {
+        goto Error;
+    }
+
+    *NewDataPath = DataPath;
+    DataPath = NULL;
 
 Error:
 
-    if (QUIC_FAILED(Status)) {
-        if (*NewDataPath != NULL) {
-            CxPlatRundownUninitialize(&(*NewDataPath)->SocketsRundown);
-            CXPLAT_FREE(*NewDataPath, QUIC_POOL_DATAPATH);
-            *NewDataPath = NULL;
+    if (DataPath != NULL) {
+#if DEBUG
+        DataPath->Uninitialized = TRUE;
+#endif
+        if (DpRawInitialized) {
+            CxPlatDpRawUninitialize(DataPath);
+        } else {
+            if (SockPoolInitialized) {
+                CxPlatSockPoolUninitialize(&DataPath->SocketPool);
+            }
+            CXPLAT_FREE(DataPath, QUIC_POOL_DATAPATH);
+            CxPlatRundownRelease(&CxPlatWorkerRundown);
         }
     }
-
-Exit:
 
     return Status;
 }
@@ -184,20 +199,41 @@ CxPlatDataPathUninitialize(
     _In_ CXPLAT_DATAPATH* Datapath
     )
 {
-    if (Datapath == NULL) {
-        return;
+    if (Datapath != NULL) {
+#if DEBUG
+        CXPLAT_DBG_ASSERT(!Datapath->Freed);
+        CXPLAT_DBG_ASSERT(!Datapath->Uninitialized);
+        Datapath->Uninitialized = TRUE;
+#endif
+        CxPlatDataPathRouteWorkerUninitialize(Datapath->RouteResolutionWorker);
+        CxPlatDpRawUninitialize(Datapath);
     }
+}
 
-    //
-    // Wait for all outstanding bindings to clean up.
-    //
-    CxPlatRundownReleaseAndWait(&Datapath->SocketsRundown);
-
-    CxPlatDataPathRouteWorkerUninitialize(Datapath->RouteResolutionWorker);
-    CxPlatDpRawUninitialize(Datapath);
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDataPathUninitializeComplete(
+    _In_ CXPLAT_DATAPATH* Datapath
+    )
+{
+#if DEBUG
+    CXPLAT_DBG_ASSERT(!Datapath->Freed);
+    CXPLAT_DBG_ASSERT(Datapath->Uninitialized);
+    Datapath->Freed = TRUE;
+#endif
     CxPlatSockPoolUninitialize(&Datapath->SocketPool);
-    CxPlatRundownUninitialize(&Datapath->SocketsRundown);
     CXPLAT_FREE(Datapath, QUIC_POOL_DATAPATH);
+    CxPlatRundownRelease(&CxPlatWorkerRundown);
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+CxPlatDataPathUpdateConfig(
+    _In_ CXPLAT_DATAPATH* Datapath,
+    _In_ QUIC_EXECUTION_CONFIG* Config
+    )
+{
+    CxPlatDpRawUpdateConfig(Datapath, Config);
 }
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
@@ -384,6 +420,7 @@ CxPlatSocketCreateUdp(
     (*NewSocket)->CibirIdLength = Config->CibirIdLength;
     (*NewSocket)->CibirIdOffsetSrc = Config->CibirIdOffsetSrc;
     (*NewSocket)->CibirIdOffsetDst = Config->CibirIdOffsetDst;
+    (*NewSocket)->UseTcp = Datapath->UseTcp;
     if (Config->CibirIdLength) {
         memcpy((*NewSocket)->CibirId, Config->CibirId, Config->CibirIdLength);
     }
@@ -413,8 +450,6 @@ CxPlatSocketCreateUdp(
     CXPLAT_FRE_ASSERT((*NewSocket)->Wildcard ^ (*NewSocket)->Connected); // Assumes either a pure wildcard listener or a
                                                                          // connected socket; not both.
 
-    CxPlatRundownAcquire(&Datapath->SocketsRundown);
-
     Status = CxPlatTryAddSocket(&Datapath->SocketPool, *NewSocket);
     if (QUIC_FAILED(Status)) {
         goto Error;
@@ -427,7 +462,6 @@ Error:
     if (QUIC_FAILED(Status)) {
         if (*NewSocket != NULL) {
             CxPlatRundownUninitialize(&(*NewSocket)->Rundown);
-            CxPlatRundownRelease(&Datapath->SocketsRundown);
             CXPLAT_FREE(*NewSocket, QUIC_POOL_SOCKET);
             *NewSocket = NULL;
         }
@@ -470,7 +504,14 @@ CxPlatSocketDelete(
     CxPlatDpRawPlumbRulesOnSocket(Socket, FALSE);
     CxPlatRemoveSocket(&Socket->Datapath->SocketPool, Socket);
     CxPlatRundownReleaseAndWait(&Socket->Rundown);
-    CxPlatRundownRelease(&Socket->Datapath->SocketsRundown);
+    if (Socket->PausedTcpSend) {
+        CxPlatDpRawTxFree(Socket->PausedTcpSend);
+    }
+
+    if (Socket->CachedRstSend) {
+        CxPlatDpRawTxEnqueue(Socket->CachedRstSend);
+    }
+
     CXPLAT_FREE(Socket, QUIC_POOL_SOCKET);
 }
 
@@ -480,7 +521,11 @@ CxPlatSocketGetLocalMtu(
     _In_ CXPLAT_SOCKET* Socket
     )
 {
-    return 1500;
+    if (Socket->UseTcp) {
+        return 1488; // Reserve space for TCP header.
+    } else {
+        return 1500;
+    }
 }
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
@@ -517,37 +562,51 @@ CxPlatDpRawRxEthernet(
         CXPLAT_RECV_DATA* PacketChain = Packets[i];
         CXPLAT_DBG_ASSERT(PacketChain->Next == NULL);
 
-        if (PacketChain->Reserved == L4_TYPE_UDP) {
+        if (PacketChain->Reserved >= L4_TYPE_UDP) {
             Socket =
                 CxPlatGetSocket(
                     &Datapath->SocketPool,
                     &PacketChain->Route->LocalAddress,
                     &PacketChain->Route->RemoteAddress);
         }
+
         if (Socket) {
-            //
-            // Found a match. Chain and deliver contiguous packets with the same 4-tuple.
-            //
-            while (i < PacketCount) {
-                QuicTraceEvent(
-                    DatapathRecv,
-                    "[data][%p] Recv %u bytes (segment=%hu) Src=%!ADDR! Dst=%!ADDR!",
-                    Socket,
-                    Packets[i]->BufferLength,
-                    Packets[i]->BufferLength,
-                    CASTED_CLOG_BYTEARRAY(sizeof(Packets[i]->Route->LocalAddress), &Packets[i]->Route->LocalAddress),
-                    CASTED_CLOG_BYTEARRAY(sizeof(Packets[i]->Route->RemoteAddress), &Packets[i]->Route->RemoteAddress));
-                if (i == PacketCount - 1 ||
-                    Packets[i+1]->Reserved != L4_TYPE_UDP ||
-                    Packets[i+1]->Route->LocalAddress.Ipv4.sin_port != Socket->LocalAddress.Ipv4.sin_port ||
-                    !CxPlatSocketCompare(Socket, &Packets[i+1]->Route->LocalAddress, &Packets[i+1]->Route->RemoteAddress)) {
-                    break;
+            if (PacketChain->Reserved == L4_TYPE_UDP || PacketChain->Reserved == L4_TYPE_TCP) {
+                uint8_t SocketType = Socket->UseTcp ? L4_TYPE_TCP : L4_TYPE_UDP;
+
+                //
+                // Found a match. Chain and deliver contiguous packets with the same 4-tuple.
+                //
+                while (i < PacketCount) {
+                    QuicTraceEvent(
+                        DatapathRecv,
+                        "[data][%p] Recv %u bytes (segment=%hu) Src=%!ADDR! Dst=%!ADDR!",
+                        Socket,
+                        Packets[i]->BufferLength,
+                        Packets[i]->BufferLength,
+                        CASTED_CLOG_BYTEARRAY(sizeof(Packets[i]->Route->LocalAddress), &Packets[i]->Route->LocalAddress),
+                        CASTED_CLOG_BYTEARRAY(sizeof(Packets[i]->Route->RemoteAddress), &Packets[i]->Route->RemoteAddress));
+                    if (i == PacketCount - 1 ||
+                        Packets[i+1]->Reserved != SocketType ||
+                        Packets[i+1]->Route->LocalAddress.Ipv4.sin_port != Socket->LocalAddress.Ipv4.sin_port ||
+                        !CxPlatSocketCompare(Socket, &Packets[i+1]->Route->LocalAddress, &Packets[i+1]->Route->RemoteAddress)) {
+                        break;
+                    }
+                    Packets[i]->Next = Packets[i+1];
+                    CXPLAT_DBG_ASSERT(Packets[i+1]->Next == NULL);
+                    i++;
                 }
-                Packets[i]->Next = Packets[i+1];
-                CXPLAT_DBG_ASSERT(Packets[i+1]->Next == NULL);
-                i++;
+                Datapath->UdpHandlers.Receive(Socket, Socket->CallbackContext, (CXPLAT_RECV_DATA*)PacketChain);
+            } else if (PacketChain->Reserved == L4_TYPE_TCP_SYN || PacketChain->Reserved == L4_TYPE_TCP_SYNACK) {
+                CxPlatDpRawSocketAckSyn(Socket, PacketChain);
+                CxPlatDpRawRxFree(PacketChain);
+            } else if (PacketChain->Reserved == L4_TYPE_TCP_FIN) {
+                CxPlatDpRawSocketAckFin(Socket, PacketChain);
+                CxPlatDpRawRxFree(PacketChain);
+            } else {
+                CxPlatDpRawRxFree(PacketChain);
             }
-            Datapath->UdpHandlers.Receive(Socket, Socket->CallbackContext, (CXPLAT_RECV_DATA*)PacketChain);
+
             CxPlatRundownRelease(&Socket->Rundown);
         } else {
             CxPlatDpRawRxFree(PacketChain);
@@ -569,12 +628,10 @@ _Success_(return != NULL)
 CXPLAT_SEND_DATA*
 CxPlatSendDataAlloc(
     _In_ CXPLAT_SOCKET* Socket,
-    _In_ CXPLAT_ECN_TYPE ECN,
-    _In_ uint16_t MaxPacketSize,
-    _Inout_ CXPLAT_ROUTE* Route
+    _Inout_ CXPLAT_SEND_CONFIG* Config
     )
 {
-    return CxPlatDpRawTxAlloc(Socket->Datapath, ECN, MaxPacketSize, Route);
+    return CxPlatDpRawTxAlloc(Socket, Config);
 }
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
@@ -617,15 +674,24 @@ CxPlatSendDataIsFull(
     return TRUE;
 }
 
+#define TH_ACK 0x10
+
 _IRQL_requires_max_(DISPATCH_LEVEL)
 QUIC_STATUS
 CxPlatSocketSend(
     _In_ CXPLAT_SOCKET* Socket,
     _In_ const CXPLAT_ROUTE* Route,
-    _In_ CXPLAT_SEND_DATA* SendData,
-    _In_ uint16_t IdealProcessor
+    _In_ CXPLAT_SEND_DATA* SendData
     )
 {
+    if (Socket->UseTcp &&
+        Socket->Connected &&
+        Route->TcpState.Syncd == FALSE) {
+        Socket->PausedTcpSend = SendData;
+        CxPlatDpRawSocketSyn(Socket, Route);
+        return QUIC_STATUS_SUCCESS;
+    }
+
     QuicTraceEvent(
         DatapathSend,
         "[data][%p] Send %u bytes in %hhu buffers (segment=%hu) Dst=%!ADDR!, Src=%!ADDR!",
@@ -638,44 +704,16 @@ CxPlatSocketSend(
     CXPLAT_DBG_ASSERT(Route->State == RouteResolved);
     CXPLAT_DBG_ASSERT(Route->Queue != NULL);
     const CXPLAT_INTERFACE* Interface = CxPlatDpRawGetInterfaceFromQueue(Route->Queue);
+
     CxPlatFramingWriteHeaders(
         Socket, Route, &SendData->Buffer, SendData->ECN,
         Interface->OffloadStatus.Transmit.NetworkLayerXsum,
-        Interface->OffloadStatus.Transmit.TransportLayerXsum);
+        Interface->OffloadStatus.Transmit.TransportLayerXsum,
+        Route->TcpState.SequenceNumber,
+        Route->TcpState.AckNumber,
+        TH_ACK);
     CxPlatDpRawTxEnqueue(SendData);
     return QUIC_STATUS_SUCCESS;
-}
-
-_IRQL_requires_max_(PASSIVE_LEVEL)
-QUIC_STATUS
-CxPlatSocketSetParam(
-    _In_ CXPLAT_SOCKET* Socket,
-    _In_ uint32_t Param,
-    _In_ uint32_t BufferLength,
-    _In_reads_bytes_(BufferLength) const UINT8 * Buffer
-    )
-{
-    UNREFERENCED_PARAMETER(Socket);
-    UNREFERENCED_PARAMETER(Param);
-    UNREFERENCED_PARAMETER(BufferLength);
-    UNREFERENCED_PARAMETER(Buffer);
-    return QUIC_STATUS_NOT_SUPPORTED;
-}
-
-_IRQL_requires_max_(PASSIVE_LEVEL)
-QUIC_STATUS
-CxPlatSocketGetParam(
-    _In_ CXPLAT_SOCKET* Socket,
-    _In_ uint32_t Param,
-    _Inout_ PUINT32 BufferLength,
-    _Out_writes_bytes_opt_(*BufferLength) UINT8 * Buffer
-    )
-{
-    UNREFERENCED_PARAMETER(Socket);
-    UNREFERENCED_PARAMETER(Param);
-    UNREFERENCED_PARAMETER(BufferLength);
-    UNREFERENCED_PARAMETER(Buffer);
-    return QUIC_STATUS_NOT_SUPPORTED;
 }
 
 CXPLAT_THREAD_CALLBACK(CxPlatRouteResolutionWorkerThread, Context)

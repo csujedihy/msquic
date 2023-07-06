@@ -56,7 +56,7 @@ ulimit -n newValue
 ## Why is the connection shutting down?
 
 1. [What does this QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT event mean?](#understanding-shutdown-by-transport)
-2. [What does this QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_APP event mean?](#understanding-shutdown-by-app)
+2. [What does this QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER event mean?](#understanding-shutdown-by-peer)
 
 ### Understanding shutdown by Transport.
 
@@ -68,9 +68,9 @@ There are two ways for a connection to be shutdown, either by the application la
 
 Above is an example event collected during an attempt to connect to a non-existent server. Eventually the connection failed and the transport indicated the event with the appropriate error code. This error code (`18446744071566327813`) maps to `0xFFFFFFFF80410005`, which specifically refers to the `QUIC_STATUS` (indicated by `QS=1`) for `0x80410005`; which indicates `ERROR_QUIC_CONNECTION_IDLE`. For more details for understanding error codes see [here](#understanding-error-codes).
 
-### Understanding shutdown by App.
+### Understanding shutdown by Peer.
 
-As indicated in [Understanding shutdown by Transport](#understanding-shutdown-by-transport), there are two ways for connections to be shutdown. The `QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_APP` event occurs when the peer application has explicitly shut down the connection. In MsQuic API terms, this would mean the app called [ConnectionShutdown](./api/connectionshutdown.md).
+As indicated in [Understanding shutdown by Transport](#understanding-shutdown-by-transport), there are two ways for connections to be shutdown. The `QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER` event occurs when the peer application has explicitly shut down the connection. In MsQuic API terms, this would mean the app called [ConnectionShutdown](./api/ConnectionShutdown.md).
 
 > TODO - Add an example event
 
@@ -150,7 +150,7 @@ This clearly shows that listener `7f30ac0dcff0` failed to register with the bind
 First, a bit of background. The MsQuic API has two types of APIs:
 
 - **Blocking / Synchronous** - These APIs run to completion and only return once finished. When running in the Windows kernel, these **MUST NOT** be called at `DISPATCH_LEVEL`. They are denoted by the `_IRQL_requires_max_(PASSIVE_LEVEL)` annotation. For example, [ConnectionClose](./api/ConnectionClose.md).
-- **Nonblocking / Asynchronous** - These APIs merely queue work and return immediately. When running in the Windows kernel, these may be called at `DISPATCH_LEVEL`. They are denoted by the `_IRQL_requires_max_(DISPATCH_LEVEL)` annotation. For example, [StreamSend][./api/StreamSend.md].
+- **Nonblocking / Asynchronous** - These APIs merely queue work and return immediately. When running in the Windows kernel, these may be called at `DISPATCH_LEVEL`. They are denoted by the `_IRQL_requires_max_(DISPATCH_LEVEL)` annotation. For example, [StreamSend](./api/StreamSend.md).
 
 Additional documentation on the MsQuic execution model is available [here](./API.md#execution-mode).
 
@@ -248,7 +248,8 @@ Network Adapters:
    80 00-15-5D-AD-8B-40 433db3ea-0acd-457a-9c86-55bb7fa27391
 ```
 
-> **Note** - If you don't do this and use it to filter to a specific component, you will get a packet capture at **every** layer, which will include many duplicates of each packet.
+> **Note**
+> If you don't do this and use it to filter to a specific component, you will get a packet capture at **every** layer, which will include many duplicates of each packet.
 
 Once you find the interface you want, take note of the `Id`. For instance, in the example above, I want to use the Ethernet adapter, so I need `9`.
 
@@ -265,7 +266,8 @@ pktmon etl2pcap pktmon.etl
 
 This produced `pktmon.pcapng` in your current directory that can then be opened by [Wireshark](https://www.wireshark.org/). If you want to be able to decrypt the QUIC packets, you will need to get/export the TLS secrets from your code (todo: add link/instructions).
 
-> **Note** - If you don't specify the component in the `filter` step, you can specify it at the `etl2pcap` step: `pktmon etl2pcap pktmon.etl -c 9` and it will produce the same final output `pcapng` file.
+> **Note**
+> If you don't specify the component in the `filter` step, you can specify it at the `etl2pcap` step: `pktmon etl2pcap pktmon.etl -c 9` and it will produce the same final output `pcapng` file.
 
 # Trouble Shooting a Performance Issue
 
@@ -335,21 +337,35 @@ Since this flame was essentially all of CPU 4, whatever is taking the most signi
 
 Software UDP Receive Offload (URO) is an importance performance feature. To check if URO is working correctly, you can follow this [guide](https://github.com/microsoft/msquic/blob/main/docs/Diagnostics.md#trace-collection) and use `Full.Verbose` profile to collect TCPIP traces. In the converted text file, if you see this event, URO is working. The below event indicates UDP layer saw a UDP packet coalesced from 5 UDP packets each with 1000 byte payload.
 ```
-[6]0000.0000::2022/03/23-20:27:14.275850900 [Microsoft-Windows-TCPIP]UDP: endpoint 0xFFFFA4033FC652C0: URO SCU received. SegCount = 5, SegSize = 1000, DataLength = 5000.
+[Microsoft-Windows-TCPIP]UDP: endpoint 0xFFFFA4033FC652C0: URO SCU received. SegCount = 5, SegSize = 1000, DataLength = 5000.
 ```
 If you are not seeing the above event at all, there are several things that can break URO functionality.
 
-- URO can be administratively turned off system-wise from a netsh knob. Check by running `netsh int udp show global`. If `Receive Offload State` is displayed as `disabled`, then URO has been administratively disabled.
+#### Global URO Knob
 
-- Take a look at the IP interface rundown traces. Software RSC/URO applicable must be `TRUE` for URO to work. If it is `FALSE`, it means the underlying miniport driver is using NDIS 5 or the interface medium is not compatible (e.g. KDNic).
+URO can be administratively turned off system-wide from a netsh knob. Check by running `netsh int udp show global`. If `Receive Offload State` is displayed as `disabled`, then URO has been administratively disabled.
+
+#### Incompatible Miniport or Medium
+
+Take a look at the IP interface rundown traces. Software RSC/URO applicable must be `TRUE` for URO to work. If it is `FALSE`, it means the underlying miniport driver is using NDIS 5 or the interface medium is not compatible (e.g. KDNic).
 ```
-[2]0E64.0E3C::2022/03/22-17:42:50.604598400 [Microsoft-Windows-TCPIP]Framing: interface rundown: Interface = 8, Luid = 0x6008000000000, Address family = 2(IPV4), Compartment = 1, Isolation mode = 0(None), Isolation ID = 0, DL address = 0x00155D563406, Interface type = 6, Physical medium type = 19(NdisPhysicalMediumOther), SW RSC/URO applicable = 0(FALSE), SW RSC enabled = 0(FALSE), Alias = Ethernet (Kernel Debugger).
+[Microsoft-Windows-TCPIP]Framing: interface rundown: Interface = 8, Luid = 0x6008000000000, Address family = 2(IPV4), Compartment = 1, Isolation mode = 0(None), Isolation ID = 0, DL address = 0x00155D563406, Interface type = 6, Physical medium type = 19(NdisPhysicalMediumOther), SW RSC/URO applicable = 0(FALSE), SW RSC enabled = 0(FALSE), Alias = Ethernet (Kernel Debugger).
 ```
-- We also have a rundown trace for URO global disabled mask. The mask must be zero for URO to work. It's common that the mask is 2, which means some incompatible WFP callouts have disabled URO. If you are seeing the mask being 2 on a freshly installed machine, try disabling real-time protection from defender settings.
+
+#### Incompatible Software Component
+
+We also have a rundown trace for URO global disabled mask. The mask must be zero for URO to work. 
+
+- It's common that the mask is `2` (`0b000010`), which means some incompatible WFP callouts have disabled URO. If you see this on a freshly installed machine, try disabling real-time protection from Microsoft Defender settings.
+
+- It's also possible the mask is `48` (`0b110000`), which means some incompatible IPSNPI clients have disabled URO. These (winnat or FSE) can automatically get enabled when WSL or Hyper-V are enabled on a machine.
 ```
-[2]0E64.0E3C::2022/03/22-17:42:50.604752100 [Microsoft-Windows-TCPIP]TCP software RSC global disabled mask = 0, UDP software URO global disabled mask = 0.
+[Microsoft-Windows-TCPIP]TCP software RSC global disabled mask = 0, UDP software URO global disabled mask = 0.
 ```
-- UDP packets by design will not be coalesced if they carry different PTP timestamps. PTP timestamp is a feature for accurately synchronizing time supported by some NICs and it should be off by default. You can turn off PTP timestamps in NIC properties.
+
+#### Incompatible Hardware Feature (PTP Timestamps)
+
+Another reason that UDP packets by design will not be coalesced if they carry different PTP timestamps. PTP timestamp is a feature for accurately synchronizing time supported by some NICs and it should be off by default. You can turn off PTP timestamps in NIC properties.
 
 ![](images/ptp-timestamp-config.png)
 

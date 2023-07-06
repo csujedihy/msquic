@@ -45,9 +45,9 @@ extern "C" {
 // Decoder Ring for PacketRxStatelessReset
 // [S][RX][-] SR %s
 // QuicTraceLogVerbose(
-                        PacketRxStatelessReset,
-                        "[S][RX][-] SR %s",
-                        QuicCidBufToStr(PacketResetToken, QUIC_STATELESS_RESET_TOKEN_LENGTH).Buffer);
+                            PacketRxStatelessReset,
+                            "[S][RX][-] SR %s",
+                            QuicCidBufToStr(PacketResetToken, QUIC_STATELESS_RESET_TOKEN_LENGTH).Buffer);
 // arg2 = arg2 = QuicCidBufToStr(PacketResetToken, QUIC_STATELESS_RESET_TOKEN_LENGTH).Buffer = arg2
 ----------------------------------------------------------*/
 #ifndef _clog_3_ARGS_TRACE_PacketRxStatelessReset
@@ -80,6 +80,24 @@ tracepoint(CLOG_CONNECTION_C, PacketRxNotAcked , arg2, arg3);\
 
 
 /*----------------------------------------------------------
+// Decoder Ring for VersionInfoChosenVersionZero
+// [conn][%p] Version Info Chosen Version is zero!
+// QuicTraceLogConnError(
+                VersionInfoChosenVersionZero,
+                Connection,
+                "Version Info Chosen Version is zero!");
+// arg1 = arg1 = Connection = arg1
+----------------------------------------------------------*/
+#ifndef _clog_3_ARGS_TRACE_VersionInfoChosenVersionZero
+#define _clog_3_ARGS_TRACE_VersionInfoChosenVersionZero(uniqueId, arg1, encoded_arg_string)\
+tracepoint(CLOG_CONNECTION_C, VersionInfoChosenVersionZero , arg1);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for ClientVersionInfoVersionMismatch
 // [conn][%p] Client Chosen Version doesn't match long header. 0x%x != 0x%x
 // QuicTraceLogConnError(
@@ -95,6 +113,26 @@ tracepoint(CLOG_CONNECTION_C, PacketRxNotAcked , arg2, arg3);\
 #ifndef _clog_5_ARGS_TRACE_ClientVersionInfoVersionMismatch
 #define _clog_5_ARGS_TRACE_ClientVersionInfoVersionMismatch(uniqueId, arg1, encoded_arg_string, arg3, arg4)\
 tracepoint(CLOG_CONNECTION_C, ClientVersionInfoVersionMismatch , arg1, arg3, arg4);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for VersionInfoOtherVersionZero
+// [conn][%p] Version Info.AvailableVersions contains a zero version! Index = %u
+// QuicTraceLogConnError(
+                        VersionInfoOtherVersionZero,
+                        Connection,
+                        "Version Info.AvailableVersions contains a zero version! Index = %u",
+                        ClientVersionIdx);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = ClientVersionIdx = arg3
+----------------------------------------------------------*/
+#ifndef _clog_4_ARGS_TRACE_VersionInfoOtherVersionZero
+#define _clog_4_ARGS_TRACE_VersionInfoOtherVersionZero(uniqueId, arg1, encoded_arg_string, arg3)\
+tracepoint(CLOG_CONNECTION_C, VersionInfoOtherVersionZero , arg1, arg3);\
 
 #endif
 
@@ -167,11 +205,11 @@ tracepoint(CLOG_CONNECTION_C, ServerVersionInformationPreviousVersionIsChosenVer
 
 /*----------------------------------------------------------
 // Decoder Ring for ServerVersionInformationPreviousVersionInOtherVerList
-// [conn][%p] Previous Client Version in Server Other Versions list: 0x%x
+// [conn][%p] Previous Client Version in Server Available Versions list: 0x%x
 // QuicTraceLogConnError(
                             ServerVersionInformationPreviousVersionInOtherVerList,
                             Connection,
-                            "Previous Client Version in Server Other Versions list: 0x%x",
+                            "Previous Client Version in Server Available Versions list: 0x%x",
                             Connection->PreviousQuicVersion);
 // arg1 = arg1 = Connection = arg1
 // arg3 = arg3 = Connection->PreviousQuicVersion = arg3
@@ -415,6 +453,26 @@ tracepoint(CLOG_CONNECTION_C, UnreachableInvalid , arg1);\
 
 
 /*----------------------------------------------------------
+// Decoder Ring for PathQeoDisabled
+// [conn][%p] Path[%hhu] QEO disabled
+// QuicTraceLogConnInfo(
+                PathQeoDisabled,
+                Connection,
+                "Path[%hhu] QEO disabled",
+                Connection->Paths[0].ID);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = Connection->Paths[0].ID = arg3
+----------------------------------------------------------*/
+#ifndef _clog_4_ARGS_TRACE_PathQeoDisabled
+#define _clog_4_ARGS_TRACE_PathQeoDisabled(uniqueId, arg1, encoded_arg_string, arg3)\
+tracepoint(CLOG_CONNECTION_C, PathQeoDisabled , arg1, arg3);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for CloseUserCanceled
 // [conn][%p] Connection close using user canceled error
 // QuicTraceLogConnInfo(
@@ -586,9 +644,9 @@ tracepoint(CLOG_CONNECTION_C, CustomCertValidationPending , arg1);\
 // Decoder Ring for RecvStatelessReset
 // [conn][%p] Received stateless reset
 // QuicTraceLogConnInfo(
-                        RecvStatelessReset,
-                        Connection,
-                        "Received stateless reset");
+                            RecvStatelessReset,
+                            Connection,
+                            "Received stateless reset");
 // arg1 = arg1 = Connection = arg1
 ----------------------------------------------------------*/
 #ifndef _clog_3_ARGS_TRACE_RecvStatelessReset
@@ -1237,17 +1295,20 @@ tracepoint(CLOG_CONNECTION_C, PeerStreamFCBlocked , arg1, arg3, arg4);\
 
 
 /*----------------------------------------------------------
-// Decoder Ring for IndicatePeerNeedStreams
-// [conn][%p] Indicating QUIC_CONNECTION_EVENT_PEER_NEEDS_STREAMS
+// Decoder Ring for IndicatePeerNeedStreamsV2
+// [conn][%p] Indicating QUIC_CONNECTION_EVENT_PEER_NEEDS_STREAMS type: %s
 // QuicTraceLogConnVerbose(
-                IndicatePeerNeedStreams,
+                IndicatePeerNeedStreamsV2,
                 Connection,
-                "Indicating QUIC_CONNECTION_EVENT_PEER_NEEDS_STREAMS");
+                "Indicating QUIC_CONNECTION_EVENT_PEER_NEEDS_STREAMS type: %s",
+                Frame.BidirectionalStreams ? "Bidi" : "Unidi"
+                );
 // arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = Frame.BidirectionalStreams ? "Bidi" : "Unidi" = arg3
 ----------------------------------------------------------*/
-#ifndef _clog_3_ARGS_TRACE_IndicatePeerNeedStreams
-#define _clog_3_ARGS_TRACE_IndicatePeerNeedStreams(uniqueId, arg1, encoded_arg_string)\
-tracepoint(CLOG_CONNECTION_C, IndicatePeerNeedStreams , arg1);\
+#ifndef _clog_4_ARGS_TRACE_IndicatePeerNeedStreamsV2
+#define _clog_4_ARGS_TRACE_IndicatePeerNeedStreamsV2(uniqueId, arg1, encoded_arg_string, arg3)\
+tracepoint(CLOG_CONNECTION_C, IndicatePeerNeedStreamsV2 , arg1, arg3);\
 
 #endif
 
@@ -1410,11 +1471,11 @@ tracepoint(CLOG_CONNECTION_C, ForceCidUpdate , arg1);\
 
 /*----------------------------------------------------------
 // Decoder Ring for TestTPSet
-// [conn][%p] Setting Test Transport Parameter (type %hu, %hu bytes)
+// [conn][%p] Setting Test Transport Parameter (type %x, %hu bytes)
 // QuicTraceLogConnVerbose(
             TestTPSet,
             Connection,
-            "Setting Test Transport Parameter (type %hu, %hu bytes)",
+            "Setting Test Transport Parameter (type %x, %hu bytes)",
             Connection->TestTransportParameter.Type,
             Connection->TestTransportParameter.Length);
 // arg1 = arg1 = Connection = arg1
@@ -1711,6 +1772,26 @@ tracepoint(CLOG_CONNECTION_C, ConnAssignWorker , arg2, arg3);\
 
 
 /*----------------------------------------------------------
+// Decoder Ring for ConnEcnCapable
+// [conn][%p] Ecn: IsCapable=%hu
+// QuicTraceEvent(
+        ConnEcnCapable,
+        "[conn][%p] Ecn: IsCapable=%hu",
+        Connection,
+        Connection->Paths[0].EcnValidationState == ECN_VALIDATION_CAPABLE);
+// arg2 = arg2 = Connection = arg2
+// arg3 = arg3 = Connection->Paths[0].EcnValidationState == ECN_VALIDATION_CAPABLE = arg3
+----------------------------------------------------------*/
+#ifndef _clog_4_ARGS_TRACE_ConnEcnCapable
+#define _clog_4_ARGS_TRACE_ConnEcnCapable(uniqueId, encoded_arg_string, arg2, arg3)\
+tracepoint(CLOG_CONNECTION_C, ConnEcnCapable , arg2, arg3);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for ConnVersionSet
 // [conn][%p] QUIC Version: %u
 // QuicTraceEvent(
@@ -1999,9 +2080,9 @@ tracepoint(CLOG_CONNECTION_C, ConnHandshakeStart , arg2);\
 // Decoder Ring for PacketDecrypt
 // [pack][%llu] Decrypting
 // QuicTraceEvent(
-        PacketDecrypt,
-        "[pack][%llu] Decrypting",
-        Packet->PacketId);
+            PacketDecrypt,
+            "[pack][%llu] Decrypting",
+            Packet->PacketId);
 // arg2 = arg2 = Packet->PacketId = arg2
 ----------------------------------------------------------*/
 #ifndef _clog_3_ARGS_TRACE_PacketDecrypt

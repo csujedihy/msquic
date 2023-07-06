@@ -25,6 +25,10 @@ volatile int BufferCurrent;
 char Buffer[BufferLength];
 
 PerfBase* TestToRun;
+QUIC_EXECUTION_PROFILE PerfDefaultExecutionProfile = QUIC_EXECUTION_PROFILE_LOW_LATENCY;
+QUIC_CONGESTION_CONTROL_ALGORITHM PerfDefaultCongestionControl = QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC;
+uint8_t PerfDefaultEcnEnabled = false;
+uint8_t PerfDefaultQeoAllowed = false;
 
 #include "quic_datapath.h"
 
@@ -88,60 +92,27 @@ PrintHelp(
         "Server: secnetperf [options]\n"
         "\n"
         "  -bind:<addr>                A local IP address to bind to.\n"
+        "  -port:<####>                The UDP port of the server. Ignored if \"bind\" is passed. (def:%u)\n"
+        "  -serverid:<####>            The ID of the server (used for load balancing).\n"
         "  -cibir:<hex_bytes>          A CIBIR well-known idenfitier.\n"
         "\n"
         "Client: secnetperf -TestName:<Throughput|RPS|HPS> [options]\n"
-#ifndef _KERNEL_MODE
         "Both:\n"
-        "  -cpu:<cpu_index>            Specify the processor(s) for the datapath to use.\n"
+        "  -exec:<profile>             Execution profile to use {lowlat, maxtput, scavenger, realtime}.\n"
+        "  -cc:<algo>                  Congestion control algorithm to use {cubic, bbr}.\n"
+        "  -pollidle:<time_us>         Amount of time to poll while idle before sleeping (default: 0).\n"
+        "  -ecn:<0/1>                  Enables/disables sender-side ECN support. (def:0)\n"
+        "  -qeo:<0/1>                  Allows/disallowes QUIC encryption offload. (def:0)\n"
+#ifndef _KERNEL_MODE
+        "  -cpu:<cpu_index>            Specify the processor(s) to use.\n"
         "  -cipher:<value>             Decimal value of 1 or more QUIC_ALLOWED_CIPHER_SUITE_FLAGS.\n"
+        "  -qtip:<0/1>                 Enables/disables Quic over TCP support. (def:0)\n"
+        "  -rio:<0/1>                  Enables/disables RIO support. (def:0)\n"
 #endif // _KERNEL_MODE
-        "\n"
+        "\n",
+        PERF_DEFAULT_PORT
         );
 }
-
-#ifdef QUIC_USE_RAW_DATAPATH
-CXPLAT_THREAD_CALLBACK(ControlThread, Context)
-{
-    WSADATA WsaData;
-    WSAStartup(MAKEWORD(2, 2), &WsaData);
-
-    CXPLAT_EVENT* Event = static_cast<CXPLAT_EVENT*>(Context);
-    SOCKADDR_STORAGE Addr = {0};
-    uint8_t RecvBuf[sizeof(SecNetPerfShutdownGuid)] = {0};
-
-    IN4ADDR_SETANY((SOCKADDR_IN*)&Addr);
-    SS_PORT(&Addr) = htons(9999);
-    SOCKET Listener = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (bind(Listener, (SOCKADDR*)&Addr, sizeof(Addr)) == SOCKET_ERROR) {
-        printf("control listener failed to bind with error %d\n", WSAGetLastError());
-        goto Done;
-    }
-
-    while (true) {
-        int BytesRcvd =
-            recvfrom(
-                Listener, (char*)RecvBuf, sizeof(RecvBuf), 0, NULL, NULL);
-        if (BytesRcvd == SOCKET_ERROR) {
-            int Error = WSAGetLastError();
-            if (Error == WSAEMSGSIZE) {
-                continue;
-            }
-            printf("recvfrom failed with error %d\n", Error);
-            goto Done;
-        }
-
-        if (BytesRcvd == sizeof(RecvBuf) &&
-            memcmp(RecvBuf, SecNetPerfShutdownGuid, sizeof(SecNetPerfShutdownGuid)) == 0) {
-            break;
-        }
-    }
-Done:
-    CxPlatEventSet(*Event);
-    closesocket(Listener);
-    CXPLAT_THREAD_RETURN(QUIC_STATUS_SUCCESS);
-}
-#endif
 
 QUIC_STATUS
 QuicMainStart(
@@ -174,22 +145,6 @@ QuicMainStart(
 
     QUIC_STATUS Status;
 
-#ifdef QUIC_USE_RAW_DATAPATH
-    if (ServerMode) {
-        CXPLAT_THREAD_CONFIG ThreadConfig = {
-            CXPLAT_THREAD_FLAG_NONE,
-            0,
-            "ControlThread",
-            ControlThread,
-            StopEvent
-        };
-
-        Status = CxPlatThreadCreate(&ThreadConfig, &ControlThreadHandle);
-        if (QUIC_FAILED(Status)) {
-            return Status;
-        }
-    }
-#else
     const CXPLAT_UDP_DATAPATH_CALLBACKS DatapathCallbacks = {
         DatapathReceive,
         DatapathUnreachable
@@ -226,7 +181,6 @@ QuicMainStart(
             return Status;
         }
     }
-#endif
 
     MsQuic = new(std::nothrow) MsQuicApi;
     if (MsQuic == nullptr) {
@@ -242,27 +196,85 @@ QuicMainStart(
         return Status;
     }
 
+    uint8_t RawConfig[QUIC_EXECUTION_CONFIG_MIN_SIZE + 256 * sizeof(uint16_t)] = {0};
+    QUIC_EXECUTION_CONFIG* Config = (QUIC_EXECUTION_CONFIG*)RawConfig;
+    Config->PollingIdleTimeoutUs = UINT32_MAX; // Default to no sleep.
+    bool SetConfig = false;
+
 #ifndef _KERNEL_MODE
+    uint8_t QuicOverTcpEnabled;
+    if (TryGetValue(argc, argv, "qtip", &QuicOverTcpEnabled)) {
+        Config->Flags |= QUIC_EXECUTION_CONFIG_FLAG_QTIP;
+        SetConfig = true;
+    }
+
+    uint8_t RioEnabled;
+    if (TryGetValue(argc, argv, "rio", &RioEnabled)) {
+        Config->Flags |= QUIC_EXECUTION_CONFIG_FLAG_RIO;
+        SetConfig = true;
+    }
+
     const char* CpuStr;
     if ((CpuStr = GetValue(argc, argv, "cpu")) != nullptr) {
-        uint16_t ProcList[64];
-        uint32_t ProcCount = 0;
-        do {
-            if (*CpuStr == ',') CpuStr++;
-            ProcList[ProcCount++] = (uint16_t)strtoul(CpuStr, (char**)&CpuStr, 10);
-        } while (*CpuStr && ProcCount < ARRAYSIZE(ProcList));
-        if (QUIC_FAILED(
-            Status =
-            MsQuic->SetParam(
-                nullptr,
-                QUIC_PARAM_GLOBAL_DATAPATH_PROCESSORS,
-                ProcCount * sizeof(uint16_t),
-                ProcList))) {
-            WriteOutput("MsQuic Failed To Set DataPath Procs %d\n", Status);
-            return Status;
+        SetConfig = true;
+        if (strtol(CpuStr, nullptr, 10) == -1) {
+            for (uint16_t i = 0; i < CxPlatProcActiveCount() && Config->ProcessorCount < 256; ++i) {
+                Config->ProcessorList[Config->ProcessorCount++] = i;
+            }
+        } else {
+            do {
+                if (*CpuStr == ',') CpuStr++;
+                Config->ProcessorList[Config->ProcessorCount++] =
+                    (uint16_t)strtoul(CpuStr, (char**)&CpuStr, 10);
+            } while (*CpuStr && Config->ProcessorCount < 256);
         }
     }
 #endif // _KERNEL_MODE
+
+    if (TryGetValue(argc, argv, "pollidle", &Config->PollingIdleTimeoutUs)) {
+        SetConfig = true;
+    }
+
+    if (SetConfig &&
+        QUIC_FAILED(
+        Status =
+        MsQuic->SetParam(
+            nullptr,
+            QUIC_PARAM_GLOBAL_EXECUTION_CONFIG,
+            (uint32_t)QUIC_EXECUTION_CONFIG_MIN_SIZE + Config->ProcessorCount * sizeof(uint16_t),
+            Config))) {
+        WriteOutput("Failed to set execution config %d\n", Status);
+        return Status;
+    }
+
+    const char* ExecStr = GetValue(argc, argv, "exec");
+    if (ExecStr != nullptr) {
+        if (IsValue(ExecStr, "lowlat")) {
+            PerfDefaultExecutionProfile = QUIC_EXECUTION_PROFILE_LOW_LATENCY;
+        } else if (IsValue(ExecStr, "maxtput")) {
+            PerfDefaultExecutionProfile = QUIC_EXECUTION_PROFILE_TYPE_MAX_THROUGHPUT;
+        } else if (IsValue(ExecStr, "scavenger")) {
+            PerfDefaultExecutionProfile = QUIC_EXECUTION_PROFILE_TYPE_SCAVENGER;
+        } else if (IsValue(ExecStr, "realtime")) {
+            PerfDefaultExecutionProfile = QUIC_EXECUTION_PROFILE_TYPE_REAL_TIME;
+        } else {
+            WriteOutput("Failed to parse execution profile[%s], use lowlat as default\n", ExecStr);
+        }
+    }
+
+    const char* CcName = GetValue(argc, argv, "cc");
+    if (CcName != nullptr) {
+        if (IsValue(CcName, "cubic")) {
+            PerfDefaultCongestionControl = QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC;
+        } else if (IsValue(CcName, "bbr")) {
+            PerfDefaultCongestionControl = QUIC_CONGESTION_CONTROL_ALGORITHM_BBR;
+        } else {
+            WriteOutput("Failed to parse congestion control algorithm[%s], use cubic as default\n", CcName);
+        }
+    }
+
+    TryGetValue(argc, argv, "ecn", &PerfDefaultEcnEnabled);
+    TryGetValue(argc, argv, "qeo", &PerfDefaultQeoAllowed);
 
     if (ServerMode) {
         TestToRun = new(std::nothrow) PerfServer(SelfSignedCredConfig);
@@ -329,17 +341,10 @@ QuicMainFree(
         Binding = nullptr;
     }
 
-#ifdef QUIC_USE_RAW_DATAPATH
-    if (ControlThreadHandle) {
-        CxPlatThreadWait(&ControlThreadHandle);
-        CxPlatThreadDelete(&ControlThreadHandle);
-    }
-#else
     if (Datapath) {
         CxPlatDataPathUninitialize(Datapath);
         Datapath = nullptr;
     }
-#endif
 
     delete Watchdog;
     Watchdog = nullptr;

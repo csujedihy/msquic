@@ -161,13 +161,13 @@ TRACEPOINT_EVENT(CLOG_LIBRARY_C, LibrarySetSettings,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for LibraryDataPathProcsSet
-// [ lib] Setting datapath procs
+// Decoder Ring for LibraryExecutionConfigSet
+// [ lib] Setting execution config
 // QuicTraceLogInfo(
-            LibraryDataPathProcsSet,
-            "[ lib] Setting datapath procs");
+            LibraryExecutionConfigSet,
+            "[ lib] Setting execution config");
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_LIBRARY_C, LibraryDataPathProcsSet,
+TRACEPOINT_EVENT(CLOG_LIBRARY_C, LibraryExecutionConfigSet,
     TP_ARGS(
 ), 
     TP_FIELDS(
@@ -286,6 +286,27 @@ TRACEPOINT_EVENT(CLOG_LIBRARY_C, LibraryLoadBalancingModeSetAfterInUse,
     TP_ARGS(
 ), 
     TP_FIELDS(
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for PerfCountersRundown
+// [ lib] Perf counters Rundown, Counters=%!CID!
+// QuicTraceEvent(
+        PerfCountersRundown,
+        "[ lib] Perf counters Rundown, Counters=%!CID!",
+        CASTED_CLOG_BYTEARRAY(sizeof(PerfCounterSamples), PerfCounterSamples));
+// arg2 = arg2 = CASTED_CLOG_BYTEARRAY(sizeof(PerfCounterSamples), PerfCounterSamples) = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_LIBRARY_C, PerfCountersRundown,
+    TP_ARGS(
+        unsigned int, arg2_len,
+        const void *, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned int, arg2_len, arg2_len)
+        ctf_sequence(char, arg2, arg2, unsigned int, arg2_len)
     )
 )
 
@@ -435,13 +456,32 @@ TRACEPOINT_EVENT(CLOG_LIBRARY_C, LibraryRelease,
 
 
 /*----------------------------------------------------------
+// Decoder Ring for DataPathInitialized
+// [data] Initialized, DatapathFeatures=%u
+// QuicTraceEvent(
+                DataPathInitialized,
+                "[data] Initialized, DatapathFeatures=%u",
+                CxPlatDataPathGetSupportedFeatures(MsQuicLib.Datapath));
+// arg2 = arg2 = CxPlatDataPathGetSupportedFeatures(MsQuicLib.Datapath) = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_LIBRARY_C, DataPathInitialized,
+    TP_ARGS(
+        unsigned int, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned int, arg2, arg2)
+    )
+)
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for LibraryError
 // [ lib] ERROR, %s.
 // QuicTraceEvent(
-                LibraryError,
-                "[ lib] ERROR, %s.",
-                "Tried to change raw datapath procs after datapath initialization");
-// arg2 = arg2 = "Tried to change raw datapath procs after datapath initialization" = arg2
+            LibraryError,
+            "[ lib] ERROR, %s.",
+            "Only v2 is supported in MsQuicOpenVersion");
+// arg2 = arg2 = "Only v2 is supported in MsQuicOpenVersion" = arg2
 ----------------------------------------------------------*/
 TRACEPOINT_EVENT(CLOG_LIBRARY_C, LibraryError,
     TP_ARGS(
@@ -544,26 +584,5 @@ TRACEPOINT_EVENT(CLOG_LIBRARY_C, LibrarySendRetryStateUpdated,
         unsigned char, arg2), 
     TP_FIELDS(
         ctf_integer(unsigned char, arg2, arg2)
-    )
-)
-
-
-
-/*----------------------------------------------------------
-// Decoder Ring for PerfCountersRundown
-// [ lib] Perf counters Rundown, Counters=%!CID!
-// QuicTraceEvent(
-            PerfCountersRundown,
-            "[ lib] Perf counters Rundown, Counters=%!CID!",
-            CASTED_CLOG_BYTEARRAY(sizeof(PerfCounters), PerfCounters));
-// arg2 = arg2 = CASTED_CLOG_BYTEARRAY(sizeof(PerfCounters), PerfCounters) = arg2
-----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_LIBRARY_C, PerfCountersRundown,
-    TP_ARGS(
-        unsigned int, arg2_len,
-        const void *, arg2), 
-    TP_FIELDS(
-        ctf_integer(unsigned int, arg2_len, arg2_len)
-        ctf_sequence(char, arg2, arg2, unsigned int, arg2_len)
     )
 )

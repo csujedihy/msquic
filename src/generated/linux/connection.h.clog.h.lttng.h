@@ -52,18 +52,20 @@ TRACEPOINT_EVENT(CLOG_CONNECTION_H, ConnInFlowStats,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for ConnStats
-// [conn][%p] STATS: SRtt=%u CongestionCount=%u PersistentCongestionCount=%u SendTotalBytes=%llu RecvTotalBytes=%llu CongestionWindow=%u
+// Decoder Ring for ConnStatsV2
+// [conn][%p] STATS: SRtt=%u CongestionCount=%u PersistentCongestionCount=%u SendTotalBytes=%llu RecvTotalBytes=%llu CongestionWindow=%u Cc=%s EcnCongestionCount=%u
 // QuicTraceEvent(
-        ConnStats,
-        "[conn][%p] STATS: SRtt=%u CongestionCount=%u PersistentCongestionCount=%u SendTotalBytes=%llu RecvTotalBytes=%llu CongestionWindow=%u",
+        ConnStatsV2,
+        "[conn][%p] STATS: SRtt=%u CongestionCount=%u PersistentCongestionCount=%u SendTotalBytes=%llu RecvTotalBytes=%llu CongestionWindow=%u Cc=%s EcnCongestionCount=%u",
         Connection,
         Path->SmoothedRtt,
         Connection->Stats.Send.CongestionCount,
         Connection->Stats.Send.PersistentCongestionCount,
         Connection->Stats.Send.TotalBytes,
         Connection->Stats.Recv.TotalBytes,
-        QuicCongestionControlGetCongestionWindow(&Connection->CongestionControl));
+        QuicCongestionControlGetCongestionWindow(&Connection->CongestionControl),
+        Connection->CongestionControl.Name,
+        Connection->Stats.Send.EcnCongestionCount);
 // arg2 = arg2 = Connection = arg2
 // arg3 = arg3 = Path->SmoothedRtt = arg3
 // arg4 = arg4 = Connection->Stats.Send.CongestionCount = arg4
@@ -71,8 +73,10 @@ TRACEPOINT_EVENT(CLOG_CONNECTION_H, ConnInFlowStats,
 // arg6 = arg6 = Connection->Stats.Send.TotalBytes = arg6
 // arg7 = arg7 = Connection->Stats.Recv.TotalBytes = arg7
 // arg8 = arg8 = QuicCongestionControlGetCongestionWindow(&Connection->CongestionControl) = arg8
+// arg9 = arg9 = Connection->CongestionControl.Name = arg9
+// arg10 = arg10 = Connection->Stats.Send.EcnCongestionCount = arg10
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_CONNECTION_H, ConnStats,
+TRACEPOINT_EVENT(CLOG_CONNECTION_H, ConnStatsV2,
     TP_ARGS(
         const void *, arg2,
         unsigned int, arg3,
@@ -80,7 +84,9 @@ TRACEPOINT_EVENT(CLOG_CONNECTION_H, ConnStats,
         unsigned int, arg5,
         unsigned long long, arg6,
         unsigned long long, arg7,
-        unsigned int, arg8), 
+        unsigned int, arg8,
+        const char *, arg9,
+        unsigned int, arg10), 
     TP_FIELDS(
         ctf_integer_hex(uint64_t, arg2, arg2)
         ctf_integer(unsigned int, arg3, arg3)
@@ -89,6 +95,8 @@ TRACEPOINT_EVENT(CLOG_CONNECTION_H, ConnStats,
         ctf_integer(uint64_t, arg6, arg6)
         ctf_integer(uint64_t, arg7, arg7)
         ctf_integer(unsigned int, arg8, arg8)
+        ctf_string(arg9, arg9)
+        ctf_integer(unsigned int, arg10, arg10)
     )
 )
 

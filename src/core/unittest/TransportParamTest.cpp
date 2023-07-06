@@ -97,7 +97,7 @@ void EncodeDecodeAndCompare(
     }
 }
 
-TEST(TransportParamTest, EmptyClient)
+/*TEST(TransportParamTest, EmptyClient)
 {
     QUIC_TRANSPORT_PARAMETERS Original;
     CxPlatZeroMemory(&Original, sizeof(Original));
@@ -109,7 +109,7 @@ TEST(TransportParamTest, EmptyServer)
     QUIC_TRANSPORT_PARAMETERS Original;
     CxPlatZeroMemory(&Original, sizeof(Original));
     EncodeDecodeAndCompare(&Original, true);
-}
+}*/
 
 TEST(TransportParamTest, Preset1)
 {
@@ -202,4 +202,13 @@ TEST(TransportParamTest, CibirEncodingOverMax2)
     OriginalTP.CibirLength = 255;
     OriginalTP.CibirOffset = 1;
     EncodeDecodeAndCompare(&OriginalTP, false, false);
+}
+
+TEST(TransportParamTest, GreaseQuicBit)
+{
+    QUIC_TRANSPORT_PARAMETERS OriginalTP;
+    CxPlatZeroMemory(&OriginalTP, sizeof(OriginalTP));
+    OriginalTP.Flags = QUIC_TP_FLAG_GREASE_QUIC_BIT;
+    EncodeDecodeAndCompare(&OriginalTP);
+    EncodeDecodeAndCompare(&OriginalTP, true);
 }

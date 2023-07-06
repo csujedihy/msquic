@@ -142,12 +142,6 @@ typedef struct QUIC_PATH QUIC_PATH;
 #define QUIC_DEFAULT_RETRY_MEMORY_FRACTION      65 // ~0.1%
 
 //
-// If enabled, workers will poll the number of times before falling back to the
-// wait or delay state.
-//
-//#define QUIC_WORKER_POLLING                     10000
-
-//
 // The maximum amount of queue delay a worker should take on (in ms).
 //
 #define QUIC_MAX_WORKER_QUEUE_DELAY             250
@@ -264,19 +258,31 @@ CXPLAT_STATIC_ASSERT(IS_POWER_OF_TWO(QUIC_MAX_RANGE_DECODE_ACKS), L"Must be powe
 // Minimum MTU allowed to be configured. Must be able to fit a
 // QUIC_MIN_INITIAL_PACKET_LENGTH in an IPv6 datagram.
 //
-#define QUIC_DPLPMUTD_MIN_MTU                   (QUIC_MIN_INITIAL_PACKET_LENGTH + \
-                                                CXPLAT_MIN_IPV6_HEADER_SIZE     + \
+#define QUIC_DPLPMTUD_MIN_MTU                   (QUIC_MIN_INITIAL_PACKET_LENGTH + \
+                                                CXPLAT_MIN_IPV6_HEADER_SIZE + \
                                                 CXPLAT_UDP_HEADER_SIZE)
+
+//
+// The minimum size of the initial packets we send. We pad a little more than
+// the spec-minimum to help with amplification limits for large server
+// certificates. This MUST BE greater than or equal to
+// QUIC_MIN_INITIAL_PACKET_LENGTH.
+//
+#define QUIC_INITIAL_PACKET_LENGTH              1240
+
+CXPLAT_STATIC_ASSERT(QUIC_INITIAL_PACKET_LENGTH >= QUIC_MIN_INITIAL_PACKET_LENGTH, "Packet length too small");
 
 //
 // The minimum IP MTU DPLPMTUD will use by default.
 //
-#define QUIC_DPLPMUTD_DEFAULT_MIN_MTU           QUIC_DPLPMUTD_MIN_MTU
+#define QUIC_DPLPMTUD_DEFAULT_MIN_MTU           (QUIC_INITIAL_PACKET_LENGTH + \
+                                                CXPLAT_MIN_IPV6_HEADER_SIZE + \
+                                                CXPLAT_UDP_HEADER_SIZE)
 
 //
 // The maximum IP MTU DPLPMTUD will use by default.
 //
-#define QUIC_DPLPMUTD_DEFAULT_MAX_MTU           1500
+#define QUIC_DPLPMTUD_DEFAULT_MAX_MTU           1500
 
 //
 // The maximum time an app callback can take before we log a warning.
@@ -490,6 +496,106 @@ CXPLAT_STATIC_ASSERT(
 //
 #define QUIC_CONGESTION_CONTROL_ALGORITHM_DEFAULT   QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC
 
+//
+// The default idle timeout period after which the source CID is updated before sending again.
+//
+#define QUIC_DEFAULT_DEST_CID_UPDATE_IDLE_TIMEOUT_MS 20000
+
+//
+// The default value for enabling grease quic bit extension.
+//
+#define QUIC_DEFAULT_GREASE_QUIC_BIT_ENABLED         FALSE
+
+//
+// The default value for enabling sender-side ECN support.
+//
+#define QUIC_DEFAULT_ECN_ENABLED                     FALSE
+
+//
+// The default settings for enabling HyStart support.
+//
+#define QUIC_DEFAULT_HYSTART_ENABLED                FALSE
+
+//
+// The default settings for allowing QEO support.
+//
+#define QUIC_DEFAULT_ENCRYPTION_OFFLOAD_ALLOWED      FALSE
+
+//
+// The number of rounds in Cubic Slow Start to sample RTT.
+//
+#define QUIC_HYSTART_DEFAULT_N_SAMPLING             8
+
+//
+// The minimum RTT threshold to exit Cubic Slow Start (in microseconds).
+//
+#define QUIC_HYSTART_DEFAULT_MIN_ETA                4000
+
+//
+// The maximum RTT threshold to exit Cubic Slow Start (in microseconds).
+//
+#define QUIC_HYSTART_DEFAULT_MAX_ETA                16000
+
+//
+// The number of rounds to spend in Conservative Slow Start before switching
+// to Congestion Avoidance.
+//
+#define QUIC_CONSERVATIVE_SLOW_START_DEFAULT_ROUNDS 5
+
+//
+// The Congestion Window growth divisor during Conservative Slow Start.
+//
+#define QUIC_CONSERVATIVE_SLOW_START_DEFAULT_GROWTH_DIVISOR 4
+
+/*************************************************************
+                  TRANSPORT PARAMETERS
+*************************************************************/
+
+#define QUIC_TP_FLAG_INITIAL_MAX_DATA                       0x00000001
+#define QUIC_TP_FLAG_INITIAL_MAX_STRM_DATA_BIDI_LOCAL       0x00000002
+#define QUIC_TP_FLAG_INITIAL_MAX_STRM_DATA_BIDI_REMOTE      0x00000004
+#define QUIC_TP_FLAG_INITIAL_MAX_STRM_DATA_UNI              0x00000008
+#define QUIC_TP_FLAG_INITIAL_MAX_STRMS_BIDI                 0x00000010
+#define QUIC_TP_FLAG_INITIAL_MAX_STRMS_UNI                  0x00000020
+#define QUIC_TP_FLAG_MAX_UDP_PAYLOAD_SIZE                   0x00000040
+#define QUIC_TP_FLAG_ACK_DELAY_EXPONENT                     0x00000080
+#define QUIC_TP_FLAG_STATELESS_RESET_TOKEN                  0x00000100
+#define QUIC_TP_FLAG_PREFERRED_ADDRESS                      0x00000200
+#define QUIC_TP_FLAG_DISABLE_ACTIVE_MIGRATION               0x00000400
+#define QUIC_TP_FLAG_IDLE_TIMEOUT                           0x00000800
+#define QUIC_TP_FLAG_MAX_ACK_DELAY                          0x00001000
+#define QUIC_TP_FLAG_ORIGINAL_DESTINATION_CONNECTION_ID     0x00002000
+#define QUIC_TP_FLAG_ACTIVE_CONNECTION_ID_LIMIT             0x00004000
+#define QUIC_TP_FLAG_MAX_DATAGRAM_FRAME_SIZE                0x00008000
+#define QUIC_TP_FLAG_INITIAL_SOURCE_CONNECTION_ID           0x00010000
+#define QUIC_TP_FLAG_RETRY_SOURCE_CONNECTION_ID             0x00020000
+#define QUIC_TP_FLAG_DISABLE_1RTT_ENCRYPTION                0x00040000
+#define QUIC_TP_FLAG_VERSION_NEGOTIATION                    0x00080000
+#define QUIC_TP_FLAG_MIN_ACK_DELAY                          0x00100000
+#define QUIC_TP_FLAG_CIBIR_ENCODING                         0x00200000
+#define QUIC_TP_FLAG_GREASE_QUIC_BIT                        0x00400000
+
+#define QUIC_TP_MAX_PACKET_SIZE_DEFAULT                     65527
+#define QUIC_TP_MAX_UDP_PAYLOAD_SIZE_MIN                    1200
+#define QUIC_TP_MAX_UDP_PAYLOAD_SIZE_MAX                    65527
+
+#define QUIC_TP_ACK_DELAY_EXPONENT_DEFAULT                  3
+#define QUIC_TP_ACK_DELAY_EXPONENT_MAX                      20
+
+#define QUIC_TP_MAX_ACK_DELAY_DEFAULT                       25 // ms
+#define QUIC_TP_MAX_ACK_DELAY_MAX                           ((1 << 14) - 1)
+#define QUIC_TP_MIN_ACK_DELAY_MAX                           ((1 << 24) - 1)
+
+#define QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT_DEFAULT          2
+#define QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT_MIN              2
+
+//
+// Max allowed value of a MAX_STREAMS frame or transport parameter.
+// Any larger value would allow a max stream ID that cannot be expressed
+// as a variable-length integer.
+//
+#define QUIC_TP_MAX_STREAMS_MAX                             ((1ULL << 60) - 1)
+
 /*************************************************************
                   PERSISTENT SETTINGS
 *************************************************************/
@@ -499,6 +605,7 @@ CXPLAT_STATIC_ASSERT(
 #define QUIC_SETTING_MAX_PARTITION_COUNT            "MaxPartitionCount"
 #define QUIC_SETTING_RETRY_MEMORY_FRACTION          "RetryMemoryFraction"
 #define QUIC_SETTING_LOAD_BALANCING_MODE            "LoadBalancingMode"
+#define QUIC_SETTING_FIXED_SERVER_ID                "FixedServerID"
 #define QUIC_SETTING_MAX_WORKER_QUEUE_DELAY         "MaxWorkerQueueDelayMs"
 #define QUIC_SETTING_MAX_STATELESS_OPERATIONS       "MaxStatelessOperations"
 #define QUIC_SETTING_MAX_BINDING_STATELESS_OPERATIONS "MaxBindingStatelessOperations"
@@ -509,9 +616,14 @@ CXPLAT_STATIC_ASSERT(
 #define QUIC_SETTING_SEND_PACING_DEFAULT            "SendPacingDefault"
 #define QUIC_SETTING_MIGRATION_ENABLED              "MigrationEnabled"
 #define QUIC_SETTING_DATAGRAM_RECEIVE_ENABLED       "DatagramReceiveEnabled"
+#define QUIC_SETTING_GREASE_QUIC_BIT_ENABLED        "GreaseQuicBitEnabled"
+#define QUIC_SETTING_ECN_ENABLED                    "EcnEnabled"
+#define QUIC_SETTING_HYSTART_ENABLED                "HyStartEnabled"
+#define QUIC_SETTING_ENCRYPTION_OFFLOAD_ALLOWED     "EncryptionOffloadAllowed"
 
 #define QUIC_SETTING_INITIAL_WINDOW_PACKETS         "InitialWindowPackets"
 #define QUIC_SETTING_SEND_IDLE_TIMEOUT_MS           "SendIdleTimeoutMs"
+#define QUIC_SETTING_DEST_CID_UPDATE_IDLE_TIMEOUT_MS "DestCidUpdateIdleTimeoutMs"
 
 #define QUIC_SETTING_INITIAL_RTT                    "InitialRttMs"
 #define QUIC_SETTING_MAX_ACK_DELAY                  "MaxAckDelayMs"
@@ -531,6 +643,10 @@ CXPLAT_STATIC_ASSERT(
 #define QUIC_SETTING_SERVER_RESUMPTION_LEVEL        "ResumptionLevel"
 
 #define QUIC_SETTING_VERSION_NEGOTIATION_EXT_ENABLE "VersionNegotiationExtEnabled"
+
+#define QUIC_SETTING_ACCEPTABLE_VERSIONS            "AcceptableVersions"
+#define QUIC_SETTING_OFFERED_VERSIONS               "OfferedVersions"
+#define QUIC_SETTING_FULLY_DEPLOYED_VERSIONS        "FullyDeployedVersions"
 
 #define QUIC_SETTING_MINIMUM_MTU                    "MinimumMtu"
 #define QUIC_SETTING_MAXIMUM_MTU                    "MaximumMtu"

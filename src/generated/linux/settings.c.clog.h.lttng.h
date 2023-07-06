@@ -114,6 +114,22 @@ TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpLoadBalancingMode,
 
 
 /*----------------------------------------------------------
+// Decoder Ring for SettingDumpFixedServerID
+// [sett] FixedServerID          = %u
+// QuicTraceLogVerbose(SettingDumpFixedServerID,           "[sett] FixedServerID          = %u", Settings->FixedServerID);
+// arg2 = arg2 = Settings->FixedServerID = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpFixedServerID,
+    TP_ARGS(
+        unsigned int, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned int, arg2, arg2)
+    )
+)
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for SettingDumpMaxStatelessOperations
 // [sett] MaxStatelessOperations = %u
 // QuicTraceLogVerbose(SettingDumpMaxStatelessOperations,  "[sett] MaxStatelessOperations = %u", Settings->MaxStatelessOperations);
@@ -434,6 +450,95 @@ TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpVersionNegoExtEnabled,
 
 
 /*----------------------------------------------------------
+// Decoder Ring for SettingDumpAcceptedVersionsLength
+// [sett] AcceptedVersionslength = %u
+// QuicTraceLogVerbose(SettingDumpAcceptedVersionsLength,  "[sett] AcceptedVersionslength = %u", Settings->VersionSettings->AcceptableVersionsLength);
+// arg2 = arg2 = Settings->VersionSettings->AcceptableVersionsLength = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpAcceptedVersionsLength,
+    TP_ARGS(
+        unsigned int, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned int, arg2, arg2)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingDumpOfferedVersionsLength
+// [sett] OfferedVersionslength  = %u
+// QuicTraceLogVerbose(SettingDumpOfferedVersionsLength,   "[sett] OfferedVersionslength  = %u", Settings->VersionSettings->OfferedVersionsLength);
+// arg2 = arg2 = Settings->VersionSettings->OfferedVersionsLength = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpOfferedVersionsLength,
+    TP_ARGS(
+        unsigned int, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned int, arg2, arg2)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingDumpAcceptableVersions
+// [sett] AcceptableVersions[%u]  = 0x%x
+// QuicTraceLogVerbose(SettingDumpAcceptableVersions,  "[sett] AcceptableVersions[%u]  = 0x%x", i, Settings->VersionSettings->AcceptableVersions[i]);
+// arg2 = arg2 = i = arg2
+// arg3 = arg3 = Settings->VersionSettings->AcceptableVersions[i] = arg3
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpAcceptableVersions,
+    TP_ARGS(
+        unsigned int, arg2,
+        unsigned int, arg3), 
+    TP_FIELDS(
+        ctf_integer(unsigned int, arg2, arg2)
+        ctf_integer(unsigned int, arg3, arg3)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingDumpOfferedVersions
+// [sett] OfferedVersions[%u]     = 0x%x
+// QuicTraceLogVerbose(SettingDumpOfferedVersions, "[sett] OfferedVersions[%u]     = 0x%x", i, Settings->VersionSettings->OfferedVersions[i]);
+// arg2 = arg2 = i = arg2
+// arg3 = arg3 = Settings->VersionSettings->OfferedVersions[i] = arg3
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpOfferedVersions,
+    TP_ARGS(
+        unsigned int, arg2,
+        unsigned int, arg3), 
+    TP_FIELDS(
+        ctf_integer(unsigned int, arg2, arg2)
+        ctf_integer(unsigned int, arg3, arg3)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingDumpFullyDeployedVersions
+// [sett] FullyDeployedVersion[%u]= 0x%x
+// QuicTraceLogVerbose(SettingDumpFullyDeployedVersions,   "[sett] FullyDeployedVersion[%u]= 0x%x", i, Settings->VersionSettings->FullyDeployedVersions[i]);
+// arg2 = arg2 = i = arg2
+// arg3 = arg3 = Settings->VersionSettings->FullyDeployedVersions[i] = arg3
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpFullyDeployedVersions,
+    TP_ARGS(
+        unsigned int, arg2,
+        unsigned int, arg3), 
+    TP_FIELDS(
+        ctf_integer(unsigned int, arg2, arg2)
+        ctf_integer(unsigned int, arg3, arg3)
+    )
+)
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for SettingDumpMinimumMtu
 // [sett] MinimumMtu             = %hu
 // QuicTraceLogVerbose(SettingDumpMinimumMtu,              "[sett] MinimumMtu             = %hu", Settings->MinimumMtu);
@@ -546,12 +651,12 @@ TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingCongestionControlAlgorithm,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for SettingDumpAcceptedVersionsLength
-// [sett] AcceptedVersionslength = %u
-// QuicTraceLogVerbose(SettingDumpAcceptedVersionsLength,      "[sett] AcceptedVersionslength = %u", Settings->VersionSettings->AcceptableVersionsLength);
-// arg2 = arg2 = Settings->VersionSettings->AcceptableVersionsLength = arg2
+// Decoder Ring for SettingDestCidUpdateIdleTimeoutMs
+// [sett] DestCidUpdateIdleTimeoutMs = %u
+// QuicTraceLogVerbose(SettingDestCidUpdateIdleTimeoutMs,  "[sett] DestCidUpdateIdleTimeoutMs = %u", Settings->DestCidUpdateIdleTimeoutMs);
+// arg2 = arg2 = Settings->DestCidUpdateIdleTimeoutMs = arg2
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpAcceptedVersionsLength,
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDestCidUpdateIdleTimeoutMs,
     TP_ARGS(
         unsigned int, arg2), 
     TP_FIELDS(
@@ -562,12 +667,76 @@ TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpAcceptedVersionsLength,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for SettingDumpOfferedVersionsLength
-// [sett] OfferedVersionslength  = %u
-// QuicTraceLogVerbose(SettingDumpOfferedVersionsLength,       "[sett] OfferedVersionslength  = %u", Settings->VersionSettings->OfferedVersionsLength);
-// arg2 = arg2 = Settings->VersionSettings->OfferedVersionsLength = arg2
+// Decoder Ring for SettingGreaseQuicBitEnabled
+// [sett] GreaseQuicBitEnabled   = %hhu
+// QuicTraceLogVerbose(SettingGreaseQuicBitEnabled,        "[sett] GreaseQuicBitEnabled   = %hhu", Settings->GreaseQuicBitEnabled);
+// arg2 = arg2 = Settings->GreaseQuicBitEnabled = arg2
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpOfferedVersionsLength,
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingGreaseQuicBitEnabled,
+    TP_ARGS(
+        unsigned char, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned char, arg2, arg2)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingEcnEnabled
+// [sett] EcnEnabled             = %hhu
+// QuicTraceLogVerbose(SettingEcnEnabled,                  "[sett] EcnEnabled             = %hhu", Settings->EcnEnabled);
+// arg2 = arg2 = Settings->EcnEnabled = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingEcnEnabled,
+    TP_ARGS(
+        unsigned char, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned char, arg2, arg2)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingHyStartEnabled
+// [sett] HyStartEnabled         = %hhu
+// QuicTraceLogVerbose(SettingHyStartEnabled,              "[sett] HyStartEnabled         = %hhu", Settings->HyStartEnabled);
+// arg2 = arg2 = Settings->HyStartEnabled = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingHyStartEnabled,
+    TP_ARGS(
+        unsigned char, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned char, arg2, arg2)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingEncryptionOffloadAllowed
+// [sett] EncryptionOffloadAllowed = %hhu
+// QuicTraceLogVerbose(SettingEncryptionOffloadAllowed,    "[sett] EncryptionOffloadAllowed = %hhu", Settings->EncryptionOffloadAllowed);
+// arg2 = arg2 = Settings->EncryptionOffloadAllowed = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingEncryptionOffloadAllowed,
+    TP_ARGS(
+        unsigned char, arg2), 
+    TP_FIELDS(
+        ctf_integer(unsigned char, arg2, arg2)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingDumpLFixedServerID
+// [sett] FixedServerID          = %u
+// QuicTraceLogVerbose(SettingDumpLFixedServerID,              "[sett] FixedServerID          = %u", Settings->FixedServerID);
+// arg2 = arg2 = Settings->FixedServerID = arg2
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpLFixedServerID,
     TP_ARGS(
         unsigned int, arg2), 
     TP_FIELDS(
@@ -578,57 +747,69 @@ TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpOfferedVersionsLength,
 
 
 /*----------------------------------------------------------
-// Decoder Ring for SettingDumpAcceptableVersions
-// [sett] AcceptableVersions[%u]  = 0x%x
-// QuicTraceLogVerbose(SettingDumpAcceptableVersions,      "[sett] AcceptableVersions[%u]  = 0x%x", i, Settings->VersionSettings->AcceptableVersions[i]);
-// arg2 = arg2 = i = arg2
-// arg3 = arg3 = Settings->VersionSettings->AcceptableVersions[i] = arg3
+// Decoder Ring for SettingsLoadInvalidAcceptableVersion
+// Invalid AcceptableVersion loaded from storage! 0x%x at position %d
+// QuicTraceLogError(
+                        SettingsLoadInvalidAcceptableVersion,
+                        "Invalid AcceptableVersion loaded from storage! 0x%x at position %d",
+                        VersionSettings->AcceptableVersions[i],
+                        (int32_t)i);
+// arg2 = arg2 = VersionSettings->AcceptableVersions[i] = arg2
+// arg3 = arg3 = (int32_t)i = arg3
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpAcceptableVersions,
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingsLoadInvalidAcceptableVersion,
     TP_ARGS(
         unsigned int, arg2,
-        unsigned int, arg3), 
+        int, arg3), 
     TP_FIELDS(
         ctf_integer(unsigned int, arg2, arg2)
-        ctf_integer(unsigned int, arg3, arg3)
+        ctf_integer(int, arg3, arg3)
     )
 )
 
 
 
 /*----------------------------------------------------------
-// Decoder Ring for SettingDumpOfferedVersions
-// [sett] OfferedVersions[%u]     = 0x%x
-// QuicTraceLogVerbose(SettingDumpOfferedVersions,         "[sett] OfferedVersions[%u]     = 0x%x", i, Settings->VersionSettings->OfferedVersions[i]);
-// arg2 = arg2 = i = arg2
-// arg3 = arg3 = Settings->VersionSettings->OfferedVersions[i] = arg3
+// Decoder Ring for SettingsLoadInvalidOfferedVersion
+// Invalid OfferedVersion loaded from storage! 0x%x at position %d
+// QuicTraceLogError(
+                        SettingsLoadInvalidOfferedVersion,
+                        "Invalid OfferedVersion loaded from storage! 0x%x at position %d",
+                        VersionSettings->OfferedVersions[i],
+                        (int32_t)i);
+// arg2 = arg2 = VersionSettings->OfferedVersions[i] = arg2
+// arg3 = arg3 = (int32_t)i = arg3
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpOfferedVersions,
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingsLoadInvalidOfferedVersion,
     TP_ARGS(
         unsigned int, arg2,
-        unsigned int, arg3), 
+        int, arg3), 
     TP_FIELDS(
         ctf_integer(unsigned int, arg2, arg2)
-        ctf_integer(unsigned int, arg3, arg3)
+        ctf_integer(int, arg3, arg3)
     )
 )
 
 
 
 /*----------------------------------------------------------
-// Decoder Ring for SettingDumpFullyDeployedVersions
-// [sett] FullyDeployedVersion[%u]= 0x%x
-// QuicTraceLogVerbose(SettingDumpFullyDeployedVersions,   "[sett] FullyDeployedVersion[%u]= 0x%x", i, Settings->VersionSettings->FullyDeployedVersions[i]);
-// arg2 = arg2 = i = arg2
-// arg3 = arg3 = Settings->VersionSettings->FullyDeployedVersions[i] = arg3
+// Decoder Ring for SettingsLoadInvalidFullyDeployedVersion
+// Invalid FullyDeployedVersion loaded from storage! 0x%x at position %d
+// QuicTraceLogError(
+                        SettingsLoadInvalidFullyDeployedVersion,
+                        "Invalid FullyDeployedVersion loaded from storage! 0x%x at position %d",
+                        VersionSettings->FullyDeployedVersions[i],
+                        (int32_t)i);
+// arg2 = arg2 = VersionSettings->FullyDeployedVersions[i] = arg2
+// arg3 = arg3 = (int32_t)i = arg3
 ----------------------------------------------------------*/
-TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingDumpFullyDeployedVersions,
+TRACEPOINT_EVENT(CLOG_SETTINGS_C, SettingsLoadInvalidFullyDeployedVersion,
     TP_ARGS(
         unsigned int, arg2,
-        unsigned int, arg3), 
+        int, arg3), 
     TP_FIELDS(
         ctf_integer(unsigned int, arg2, arg2)
-        ctf_integer(unsigned int, arg3, arg3)
+        ctf_integer(int, arg3, arg3)
     )
 )
 

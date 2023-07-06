@@ -143,6 +143,8 @@ QuicPacketTypeToEncryptLevelV2(
 #define QUIC_CONN_SEND_FLAG_HANDSHAKE_DONE          0x00002000U
 #define QUIC_CONN_SEND_FLAG_DATAGRAM                0x00004000U
 #define QUIC_CONN_SEND_FLAG_ACK_FREQUENCY           0x00008000U
+#define QUIC_CONN_SEND_FLAG_BIDI_STREAMS_BLOCKED    0x00010000U
+#define QUIC_CONN_SEND_FLAG_UNI_STREAMS_BLOCKED     0x00020000U
 #define QUIC_CONN_SEND_FLAG_DPLPMTUD                0x80000000U
 
 //
@@ -172,7 +174,9 @@ QuicPacketTypeToEncryptLevelV2(
     QUIC_CONN_SEND_FLAG_PING | \
     QUIC_CONN_SEND_FLAG_DATAGRAM | \
     QUIC_CONN_SEND_FLAG_ACK_FREQUENCY | \
-    QUIC_CONN_SEND_FLAG_DPLPMTUD \
+    QUIC_CONN_SEND_FLAG_DPLPMTUD | \
+    QUIC_CONN_SEND_FLAG_BIDI_STREAMS_BLOCKED | \
+    QUIC_CONN_SEND_FLAG_UNI_STREAMS_BLOCKED \
 )
 
 //
@@ -242,6 +246,11 @@ typedef struct QUIC_SEND {
     BOOLEAN TailLossProbeNeeded : 1;
 
     //
+    // Indicates the connection is cleaning up.
+    //
+    BOOLEAN Uninitialized : 1;
+
+    //
     // The next packet number to use.
     //
     uint64_t NextPacketNumber;
@@ -250,6 +259,12 @@ typedef struct QUIC_SEND {
     // Last time send flush occurred. Used for pacing calculations.
     //
     uint64_t LastFlushTime;
+
+    //
+    // The total number of packets sent with each corresponding ECT codepoint in all encryption
+    // level.
+    //
+    uint64_t NumPacketsSentWithEct;
 
     //
     // The value we send in MAX_DATA frames.
@@ -301,6 +316,14 @@ typedef struct QUIC_SEND {
     uint16_t InitialTokenLength;
 
 } QUIC_SEND;
+
+//
+// This structure defines flow blocked timing for a stream or connection.
+//
+typedef struct QUIC_FLOW_BLOCKED_TIMING_TRACKER {
+    uint64_t CumulativeTimeUs;
+    uint64_t LastStartTimeUs;
+} QUIC_FLOW_BLOCKED_TIMING_TRACKER;
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 void

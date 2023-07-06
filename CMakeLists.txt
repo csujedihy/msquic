@@ -22,8 +22,9 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 message(STATUS "Source Dir: ${CMAKE_CURRENT_SOURCE_DIR}")
 message(STATUS "Host System name: ${CMAKE_HOST_SYSTEM_NAME}")
 if ("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Windows")
-    set(CMAKE_SYSTEM_VERSION 10.0.18362.0 CACHE STRING INTERNAL FORCE)
-    set(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION 10.0.18362.0 CACHE STRING INTERNAL FORCE)
+    if (NOT DEFINED CMAKE_SYSTEM_VERSION)
+        set(CMAKE_SYSTEM_VERSION 10.0.18362 CACHE STRING INTERNAL FORCE)
+    endif()
 endif()
 
 if(POLICY CMP0091)
@@ -55,7 +56,7 @@ message(STATUS "Platform version: ${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 set(QUIC_MAJOR_VERSION 2)
-set(QUIC_FULL_VERSION 2.1.0)
+set(QUIC_FULL_VERSION 2.3.0)
 
 if (WIN32)
     set(CX_PLATFORM "windows")
@@ -85,6 +86,7 @@ option(QUIC_BUILD_SHARED "Builds msquic as a dynamic library" ON)
 option(QUIC_ENABLE_LOGGING "Enables logging" OFF)
 option(QUIC_ENABLE_SANITIZERS "Enables sanitizers" OFF)
 option(QUIC_STATIC_LINK_CRT "Statically links the C runtime" ON)
+option(QUIC_STATIC_LINK_PARTIAL_CRT "Statically links the compiler-specific portion of the C runtime" ON)
 option(QUIC_UWP_BUILD "Build for UWP" OFF)
 option(QUIC_GAMECORE_BUILD "Build for GameCore" OFF)
 option(QUIC_PGO "Enables profile guided optimizations" OFF)
@@ -98,11 +100,21 @@ option(QUIC_SKIP_CI_CHECKS "Disable CI specific build checks" OFF)
 option(QUIC_TELEMETRY_ASSERTS "Enable telemetry asserts in release builds" OFF)
 option(QUIC_USE_SYSTEM_LIBCRYPTO "Use system libcrypto if openssl TLS" OFF)
 option(QUIC_HIGH_RES_TIMERS "Configure the system to use high resolution timers" OFF)
-option(QUIC_SHARED_EC "Use shared execution contexts between QUIC and UDP" OFF)
 option(QUIC_USE_XDP "Uses XDP instead of socket APIs" OFF)
-option(QUIC_DISABLE_POSIX_GSO "Disable GSO for systems that say they support it but don't" OFF)
+option(QUIC_OFFICIAL_RELEASE "Configured the build for an official release" OFF)
 set(QUIC_FOLDER_PREFIX "" CACHE STRING "Optional prefix for source group folders when using an IDE generator")
 set(QUIC_LIBRARY_NAME "msquic" CACHE STRING "Override the output library name")
+set(QUIC_LOGGING_TYPE "" CACHE STRING "Explicitly choose logging backend (\"etw\", \"lttng\" or \"stdout\")")
+string(TOLOWER "${QUIC_LOGGING_TYPE}" QUIC_LOGGING_TYPE)
+if(NOT "${QUIC_LOGGING_TYPE}" MATCHES "^(etw|lttng|stdout|)$")
+    message(FATAL_ERROR "QUIC_LOGGING_TYPE must be \"etw\", \"lttng\" or \"stdout\", not \"${QUIC_LOGGING_TYPE}\"")
+endif()
+
+if (QUIC_GAMECORE_BUILD)
+    if(${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION} VERSION_LESS "10.0.20348.0")
+        message(FATAL_ERROR "gamecore builds require Windows 10 SDK version 20348 or later.")
+    endif()
+endif()
 
 if (QUIC_UWP_BUILD OR QUIC_GAMECORE_BUILD)
     message(STATUS "UWP And GameCore builds disable all executables, and force shared CRT")
@@ -110,6 +122,11 @@ if (QUIC_UWP_BUILD OR QUIC_GAMECORE_BUILD)
     set(QUIC_BUILD_TEST OFF)
     set(QUIC_BUILD_PERF OFF)
     set(QUIC_STATIC_LINK_CRT OFF)
+    set(QUIC_STATIC_LINK_PARTIAL_CRT OFF)
+endif()
+
+if (QUIC_STATIC_LINK_PARTIAL_CRT)
+    set(QUIC_STATIC_LINK_CRT ON)
 endif()
 
 if (NOT QUIC_BUILD_SHARED)
@@ -117,12 +134,6 @@ if (NOT QUIC_BUILD_SHARED)
 endif()
 
 set(BUILD_SHARED_LIBS ${QUIC_BUILD_SHARED})
-
-# FindLTTngUST does not exist before CMake 3.6, so disable logging for older cmake versions
-if (${CMAKE_VERSION} VERSION_LESS "3.6.0")
-    message(WARNING "Logging unsupported on this version of CMake. Please upgrade to 3.6 or later.")
-    set(QUIC_ENABLE_LOGGING OFF)
-endif()
 
 if (QUIC_PDBALTPATH AND MSVC)
 #    Disabled in all cases because generation is broken.
@@ -220,6 +231,11 @@ if (WIN32)
         list(APPEND QUIC_COMMON_FLAGS /MP)
     endif()
     set(QUIC_COMMON_DEFINES WIN32_LEAN_AND_MEAN SECURITY_WIN32)
+
+    if(QUIC_ENABLE_LOGGING AND QUIC_LOGGING_TYPE STREQUAL "")
+        set(QUIC_LOGGING_TYPE "etw")
+        message(STATUS "Choosing etw as default logging type for platform")
+    endif()
 else()
 
     include(CheckSymbolExists)
@@ -257,25 +273,21 @@ else()
             endif()
         endif()
 
-        if (QUIC_ENABLE_LOGGING)
-            check_include_file(lttng/ust-config.h HAS_LTTNG)
-            if (NOT HAS_LTTNG)
-                message(STATUS "LTTng logging not found. Disabling logging")
-                set(QUIC_ENABLE_LOGGING OFF)
-            endif()
-        endif()
-
-        # Check to see if lttng will work
-        if(QUIC_ENABLE_LOGGING)
-            check_symbol_exists(LTTNG_UST_HAVE_SDT_INTEGRATION lttng/ust-config.h HAS_LTTNG_SDT)
-            if(HAS_LTTNG_SDT)
-                message(WARNING "LTTng with SDT integration does not work. Disabling logging")
-                set(QUIC_ENABLE_LOGGING OFF)
-            endif()
+        if(QUIC_ENABLE_LOGGING AND QUIC_LOGGING_TYPE STREQUAL "")
+            set(QUIC_LOGGING_TYPE "lttng")
+            message(STATUS "Choosing lttng as default logging type for platform")
         endif()
 
     elseif(CX_PLATFORM STREQUAL "darwin")
         check_function_exists(sysctl HAS_SYSCTL)
+        if(QUIC_ENABLE_LOGGING)
+            if(QUIC_LOGGING_TYPE STREQUAL "stdout")
+                message(STATUS "Choosing stdout as logging type for platform")
+            elseif(QUIC_LOGGING_TYPE STREQUAL "")
+                message(WARNING "Must explicitly set QUIC_LOGGING_TYPE to \"stdout\" to enable due to performance overhead; disabling logging")
+                set(QUIC_ENABLE_LOGGING OFF)
+            endif()
+        endif()
     endif()
 
     set(QUIC_COMMON_FLAGS "")
@@ -317,32 +329,114 @@ if(QUIC_HIGH_RES_TIMERS)
     list(APPEND QUIC_COMMON_DEFINES QUIC_HIGH_RES_TIMERS=1)
 endif()
 
-if(QUIC_SHARED_EC)
-    list(APPEND QUIC_COMMON_DEFINES QUIC_USE_EXECUTION_CONTEXTS=1)
+if (QUIC_ENABLE_SANITIZERS)
+    list(APPEND QUIC_COMMON_DEFINES DISABLE_CXPLAT_POOL=1)
 endif()
 
 if(QUIC_USE_XDP)
-    list(APPEND QUIC_COMMON_DEFINES QUIC_USE_EXECUTION_CONTEXTS=1 QUIC_USE_RAW_DATAPATH=1)
+    list(APPEND QUIC_COMMON_DEFINES QUIC_USE_RAW_DATAPATH=1)
+endif()
+
+if(QUIC_OFFICIAL_RELEASE)
+    list(APPEND QUIC_COMMON_DEFINES QUIC_OFFICIAL_RELEASE=1)
+    message(STATUS "Configured for official release build")
 endif()
 
 if(QUIC_TLS STREQUAL "schannel")
     message(STATUS "Enabling Schannel configuration tests")
     list(APPEND QUIC_COMMON_DEFINES QUIC_TEST_SCHANNEL_FLAGS=1)
-    if (NOT QUIC_SHARED_EC)
-        message(STATUS "Enabling UDP Send Queuing")
-        list(APPEND QUIC_COMMON_DEFINES CXPLAT_DATAPATH_QUEUE_SENDS=1)
-    endif()
+
     message(STATUS "Disabling PFX tests")
     list(APPEND QUIC_COMMON_DEFINES QUIC_DISABLE_PFX_TESTS)
     message(STATUS "Disabling 0-RTT support")
     list(APPEND QUIC_COMMON_DEFINES QUIC_DISABLE_0RTT_TESTS)
     message(STATUS "Disabling ChaCha20 support")
     list(APPEND QUIC_COMMON_DEFINES QUIC_DISABLE_CHACHA20_TESTS)
+    message(STATUS "Enabling anonymous client auth tests")
+    list(APPEND QUIC_COMMON_DEFINES QUIC_ENABLE_ANON_CLIENT_AUTH_TESTS)
 endif()
 
-if(QUIC_TLS STREQUAL "openssl")
+if(QUIC_TLS STREQUAL "openssl" OR  QUIC_TLS STREQUAL "openssl3")
     message(STATUS "Enabling OpenSsl configuration tests")
     list(APPEND QUIC_COMMON_DEFINES QUIC_TEST_OPENSSL_FLAGS=1)
+    if (NOT WIN32)
+       message(STATUS "Enabling CA file tests")
+       list(APPEND QUIC_COMMON_DEFINES QUIC_ENABLE_CA_CERTIFICATE_FILE_TESTS)
+    endif()
+endif()
+
+if(QUIC_ENABLE_LOGGING)
+    if (QUIC_LOGGING_TYPE STREQUAL "etw")
+        if (WIN32)
+            message(STATUS "Configuring for manifested ETW logging")
+            list(APPEND QUIC_COMMON_DEFINES QUIC_EVENTS_MANIFEST_ETW QUIC_LOGS_MANIFEST_ETW)
+        else()
+            message(WARNING "ETW logging is only available on WIN32. Disabling logging")
+            set(QUIC_ENABLE_LOGGING OFF)
+        endif()
+
+    elseif (QUIC_LOGGING_TYPE STREQUAL "lttng")
+        if (QUIC_ENABLE_SANITIZERS)
+            message(WARNING "LTTng logging is incompatible with sanitizers. Skipping logging")
+            set(QUIC_ENABLE_LOGGING OFF)
+        else()
+            # FindLTTngUST does not exist before CMake 3.6, so disable logging for older cmake versions
+            if (${CMAKE_VERSION} VERSION_LESS "3.6.0")
+                message(WARNING "Logging unsupported on this version of CMake. Please upgrade to 3.6 or later.")
+                set(QUIC_ENABLE_LOGGING OFF)
+            else()
+                check_include_file(lttng/ust-config.h HAS_LTTNG)
+                if (NOT HAS_LTTNG)
+                    message(WARNING "LTTng logging not found. Disabling logging")
+                    set(QUIC_ENABLE_LOGGING OFF)
+                else()
+                    check_symbol_exists(LTTNG_UST_HAVE_SDT_INTEGRATION lttng/ust-config.h HAS_LTTNG_SDT)
+                    if(HAS_LTTNG_SDT)
+                        message(WARNING "LTTng with SDT integration does not work. Disabling logging")
+                        set(QUIC_ENABLE_LOGGING OFF)
+                    else()
+                        message(STATUS "Configuring for LTTng logging")
+                        list(APPEND QUIC_COMMON_DEFINES QUIC_CLOG)
+                        include(FindLTTngUST)
+                    endif()
+                endif()
+            endif()
+        endif()
+
+    elseif (QUIC_LOGGING_TYPE STREQUAL "stdout")
+        message(STATUS "Configuring for stdout logging")
+        list(APPEND QUIC_COMMON_DEFINES QUIC_EVENTS_STDOUT QUIC_LOGS_STDOUT)
+    endif()
+
+else()
+    message(STATUS "QUIC_ENABLE_LOGGING is false. Disabling logging")
+endif()
+
+if (NOT QUIC_ENABLE_LOGGING)
+    list(APPEND QUIC_COMMON_DEFINES QUIC_EVENTS_STUB QUIC_LOGS_STUB)
+endif()
+
+if (NOT MSVC AND NOT APPLE AND NOT ANDROID)
+    find_library(ATOMIC NAMES atomic libatomic.so.1)
+    if (ATOMIC)
+        message(STATUS "Found libatomic: ${ATOMIC}")
+    else()
+        message(STATUS "libatomic not found. If build fails, install libatomic")
+    endif()
+
+    find_library(NUMA NAMES NUMA libnuma.so.1)
+    if (NUMA)
+        message(STATUS "Found libnuma: ${NUMA}")
+        find_file(NUMA-HEADER NAMES "numa.h")
+        if (NUMA-HEADER)
+            message(STATUS "Found numa.h: ${NUMA-HEADER}")
+            list(APPEND QUIC_COMMON_DEFINES CXPLAT_NUMA_AWARE)
+        else()
+            message(STATUS "numa.h not found. If build fails, install libnuma-dev")
+        endif()
+    else()
+        message(STATUS "libnuma not found. If build fails, install libnuma")
+    endif()
 endif()
 
 if(WIN32)
@@ -445,14 +539,6 @@ if(WIN32)
 
     endif()
 
-    if(QUIC_ENABLE_LOGGING)
-        message(STATUS "Configuring for manifested ETW tracing")
-        list(APPEND QUIC_COMMON_DEFINES QUIC_EVENTS_MANIFEST_ETW QUIC_LOGS_MANIFEST_ETW)
-    else()
-        message(STATUS "QUIC_ENABLE_LOGGING is false. Disabling logging")
-        list(APPEND QUIC_COMMON_DEFINES QUIC_EVENTS_STUB QUIC_LOGS_STUB)
-    endif()
-
     if(QUIC_ENABLE_SANITIZERS)
         # This fails when linking statically, so for today require dynamic linkage
         if (QUIC_STATIC_LINK_CRT)
@@ -460,6 +546,7 @@ if(WIN32)
         endif()
         message(STATUS "Configuring sanitizers")
         list(APPEND QUIC_COMMON_FLAGS /fsanitize=address)
+        list(APPEND QUIC_COMMON_DEFINES _DISABLE_VECTOR_ANNOTATION) # For std:vector usage in tests
     endif()
 
     set(QUIC_C_FLAGS ${QUIC_COMMON_FLAGS})
@@ -471,8 +558,23 @@ if(WIN32)
     set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG /IGNORE:4075 /DEBUG /OPT:REF /OPT:ICF")
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG /IGNORE:4075 /DEBUG /OPT:REF /OPT:ICF")
 
+    # Find the right PGO file.
+    if(QUIC_USE_XDP)
+        set(QUIC_PGO_NAME "msquic.${QUIC_TLS}.xdp.pgd")
+        set(QUIC_PGO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/bin/winuser/pgo_${SYSTEM_PROCESSOR}/${QUIC_PGO_NAME}")
+    endif()
+
+    if(NOT EXISTS "${QUIC_PGO_FILE}")
+        set(QUIC_PGO_NAME "msquic.${QUIC_TLS}.pgd")
+        set(QUIC_PGO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/bin/winuser/pgo_${SYSTEM_PROCESSOR}/${QUIC_PGO_NAME}")
+    endif()
+    if(NOT EXISTS "${QUIC_PGO_FILE}")
+        set(QUIC_PGO_NAME "msquic.pgd")
+        set(QUIC_PGO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/bin/winuser/pgo_${SYSTEM_PROCESSOR}/${QUIC_PGO_NAME}")
+    endif()
+    message(STATUS "Using PGO file ${QUIC_PGO_NAME}")
+
     # Configure PGO linker flags.
-    set(QUIC_PGO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/bin/winuser/pgo_${SYSTEM_PROCESSOR}/msquic.pgd")
     if(QUIC_PGO)
         # Configured for training mode. Use the previous PGD file if present.
         if(EXISTS "${QUIC_PGO_FILE}")
@@ -499,6 +601,17 @@ if(WIN32)
         set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
 
+    if(QUIC_STATIC_LINK_PARTIAL_CRT)
+        message(STATUS "Configuring for partially statically-linked CRT")
+        set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib")
+    endif()
+
+    if (NOT QUIC_STATIC_LINK_CRT AND NOT QUIC_STATIC_LINK_PARTIAL_CRT)
+        # We are using dynamic linking. Ensure that only the release version of CRT is used.
+        message(STATUS "Configuring for release version of dynamically linked CRT")
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    endif()
+
 else() #!WIN32
     # Custom build flags.
 
@@ -506,9 +619,9 @@ else() #!WIN32
         set(MARCH -march=native)
     endif()
 
-    set(CMAKE_C_FLAGS_DEBUG "-Og")
+    set(CMAKE_C_FLAGS_DEBUG "-Og -fno-omit-frame-pointer")
     set(CMAKE_C_FLAGS_MINSIZEREL "-Os -DNDEBUG")
-    set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O3 ${MARCH} -DNDEBUG")
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O3 -fno-omit-frame-pointer ${MARCH} -DNDEBUG")
     set(CMAKE_C_FLAGS_RELEASE "-O3 ${MARCH} -DNDEBUG")
     if (CX_PLATFORM STREQUAL "darwin")
         set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -gdwarf")
@@ -534,34 +647,9 @@ else() #!WIN32
         list(APPEND QUIC_COMMON_DEFINES QUIC_SHARED_EPHEMERAL_WORKAROUND)
     endif()
 
-    if (QUIC_DISABLE_POSIX_GSO)
-        list(APPEND QUIC_COMMON_DEFINES DISABLE_POSIX_GSO)
-    endif()
-
-    if (QUIC_ENABLE_SANITIZERS)
-        set(QUIC_ENABLE_LOGGING OFF)
-        message(WARNING "LTTng logging is incompatible with sanitizers. Skipping logging")
-    endif()
-
-    if(QUIC_ENABLE_LOGGING)
-        if (APPLE)
-            set (QUIC_ENABLE_LOGGING OFF)
-            message(STATUS "Disabling all tracing on macos")
-            list(APPEND QUIC_COMMON_DEFINES QUIC_EVENTS_STUB QUIC_LOGS_STUB)
-        else()
-            message(STATUS "Configuring for LTTng tracing")
-            list(APPEND QUIC_COMMON_DEFINES QUIC_CLOG)
-            set (QUIC_LINUX_LOGGING_METHOD linux)
-            include(FindLTTngUST)
-        endif()
-    else()
-        message(STATUS "QUIC_ENABLE_LOGGING is false. Disabling logging")
-        list(APPEND QUIC_COMMON_DEFINES QUIC_EVENTS_STUB QUIC_LOGS_STUB)
-    endif()
-
     if(QUIC_ENABLE_SANITIZERS)
         message(STATUS "Configuring sanitizers")
-        list(APPEND QUIC_COMMON_FLAGS -fsanitize=address,leak,undefined,alignment -fsanitize-address-use-after-scope -Og -fno-omit-frame-pointer -fno-optimize-sibling-calls)
+        list(APPEND QUIC_COMMON_FLAGS -fsanitize=address,leak,undefined,alignment -fsanitize-address-use-after-scope -Og -fno-omit-frame-pointer -fno-optimize-sibling-calls -fno-var-tracking-assignments)
         if (CX_PLATFORM STREQUAL "darwin")
             list(APPEND QUIC_COMMON_FLAGS -gdwarf)
         else()
@@ -576,7 +664,7 @@ else() #!WIN32
     set(QUIC_CXX_FLAGS ${QUIC_COMMON_FLAGS})
 endif()
 
-if(QUIC_TLS STREQUAL "openssl")
+if(QUIC_TLS STREQUAL "openssl" OR  QUIC_TLS STREQUAL "openssl3")
     add_library(OpenSSL INTERFACE)
 
     include(FetchContent)
@@ -594,6 +682,10 @@ if(QUIC_TLS STREQUAL "openssl")
     )
 endif()
 
+if (QUIC_USE_SYSTEM_LIBCRYPTO)
+    list(APPEND QUIC_COMMON_DEFINES CXPLAT_SYSTEM_CRYPTO)
+endif()
+
 if(QUIC_CODE_CHECK)
     find_program(CLANGTIDY NAMES clang-tidy)
     if(CLANGTIDY)
@@ -603,6 +695,7 @@ if(QUIC_CODE_CHECK)
             -altera-*
             -android-cloexec-fopen
             -android-cloexec-socket
+            -bugprone-assignment-in-if-condition
             -bugprone-easily-swappable-parameters
             -bugprone-implicit-widening-of-multiplication-result
             -bugprone-macro-parentheses
@@ -611,6 +704,7 @@ if(QUIC_CODE_CHECK)
             -bugprone-sizeof-expression
             -cert-dcl37-c
             -cert-dcl51-cpp
+            -cert-err33-c
             -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
             -clang-diagnostic-microsoft-anon-tag
             -concurrency-mt-unsafe
@@ -618,13 +712,19 @@ if(QUIC_CODE_CHECK)
             -cppcoreguidelines-avoid-non-const-global-variables
             -cppcoreguidelines-init-variables
             -cppcoreguidelines-narrowing-conversions
+            -google-readability-function-size
             -google-readability-todo
+            -hicpp-function-size
             -hicpp-no-assembler
             -hicpp-signed-bitwise
             -llvmlibc-restrict-system-libc-headers
             -misc-no-recursion # do you really need recursion?
+            -modernize-macro-to-enum
             -readability-avoid-const-params-in-decls
+            -readability-duplicate-include
             -readability-function-cognitive-complexity
+            -readability-function-size
+            -readability-identifier-length
             -readability-isolate-declaration
             -readability-magic-numbers
             -readability-non-const-parameter

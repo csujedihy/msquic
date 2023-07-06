@@ -214,17 +214,26 @@ CXPLAT_THREAD_CALLBACK(TcpWorker::WorkerThread, Context)
     CXPLAT_THREAD_RETURN(0);
 }
 
-void TcpWorker::QueueConnection(TcpConnection* Connection)
+bool TcpWorker::QueueConnection(TcpConnection* Connection)
 {
+    bool Result = true;
     CxPlatDispatchLockAcquire(&Lock);
+    //
+    // Try to queue the connection if we can add a ref. If we're shutting down
+    // the socket, it's possible a receive happens that would fail to add ref.
+    //
     if (!Connection->QueuedOnWorker) {
-        Connection->QueuedOnWorker = true;
-        Connection->AddRef();
-        *ConnectionsTail = Connection;
-        ConnectionsTail = &Connection->Next;
-        CxPlatEventSet(WakeEvent);
+        if (Connection->TryAddRef()) {
+            Connection->QueuedOnWorker = true;
+            *ConnectionsTail = Connection;
+            ConnectionsTail = &Connection->Next;
+            CxPlatEventSet(WakeEvent);
+        } else {
+            Result = false;
+        }
     }
     CxPlatDispatchLockRelease(&Lock);
+    return Result;
 }
 
 // ############################# SERVER #############################
@@ -371,6 +380,12 @@ TcpConnection::~TcpConnection()
         CxPlatTlsUninitialize(Tls);
     }
     if (Socket) {
+        CxPlatDispatchLockAcquire(&Lock);
+        CXPLAT_RECV_DATA* RecvDataChain = ReceiveData;
+        ReceiveData = nullptr;
+        CxPlatDispatchLockRelease(&Lock);
+        CxPlatRecvDataReturn(RecvDataChain);
+
         CxPlatSocketDelete(Socket);
     }
     if (!IsServer && SecConfig) {
@@ -424,11 +439,17 @@ TcpConnection::ReceiveCallback(
     }
     *Tail = RecvDataChain;
     CxPlatDispatchLockRelease(&This->Lock);
-    This->Queue();
+    if (!This->Queue()) {
+        CxPlatDispatchLockAcquire(&This->Lock);
+        RecvDataChain = This->ReceiveData;
+        This->ReceiveData = nullptr;
+        CxPlatDispatchLockRelease(&This->Lock);
+        CxPlatRecvDataReturn(RecvDataChain);
+    }
 }
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
-    _Function_class_(CXPLAT_DATAPATH_SEND_COMPLETE_CALLBACK)
+_Function_class_(CXPLAT_DATAPATH_SEND_COMPLETE_CALLBACK)
 void
 TcpConnection::SendCompleteCallback(
     _In_ CXPLAT_SOCKET* /* Socket */,
@@ -517,7 +538,7 @@ void TcpConnection::Process()
     }
     if (BatchedSendData) {
         if (QUIC_FAILED(
-            CxPlatSocketSend(Socket, &Route, BatchedSendData, PartitionIndex))) {
+            CxPlatSocketSend(Socket, &Route, BatchedSendData))) {
             IndicateDisconnect = true;
         }
         BatchedSendData = nullptr;
@@ -884,7 +905,8 @@ bool TcpConnection::EncryptFrame(TcpFrame* Frame)
 QUIC_BUFFER* TcpConnection::NewSendBuffer()
 {
     if (!BatchedSendData) {
-        BatchedSendData = CxPlatSendDataAlloc(Socket, CXPLAT_ECN_NON_ECT, TLS_BLOCK_SIZE, &Route);
+        CXPLAT_SEND_CONFIG SendConfig = { &Route, TLS_BLOCK_SIZE, CXPLAT_ECN_NON_ECT, 0 };
+        BatchedSendData = CxPlatSendDataAlloc(Socket, &SendConfig);
         if (!BatchedSendData) { return nullptr; }
     }
     return CxPlatSendDataAllocBuffer(BatchedSendData, TLS_BLOCK_SIZE);
@@ -901,7 +923,7 @@ bool TcpConnection::FinalizeSendBuffer(QUIC_BUFFER* SendBuffer)
     if (SendBuffer->Length != TLS_BLOCK_SIZE ||
         CxPlatSendDataIsFull(BatchedSendData)) {
         if (QUIC_FAILED(
-            CxPlatSocketSend(Socket, &Route, BatchedSendData, PartitionIndex))) {
+            CxPlatSocketSend(Socket, &Route, BatchedSendData))) {
             WriteOutput("CxPlatSocketSend FAILED\n");
             return false;
         }

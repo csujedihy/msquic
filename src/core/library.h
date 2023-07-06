@@ -206,10 +206,9 @@ typedef struct QUIC_LIBRARY {
     CXPLAT_STORAGE* Storage;
 
     //
-    // Processor candidates for raw datapath threads.
+    // Configuration for execution of the library (optionally set by the app).
     //
-    uint16_t* DataPathProcList;
-    uint32_t DataPathProcListLength;
+    QUIC_EXECUTION_CONFIG* ExecutionConfig;
 
     //
     // Datapath instance for the library.
@@ -301,6 +300,16 @@ QuicLibraryGetCurrentPartition(
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 inline
+QUIC_LIBRARY_PP*
+QuicLibraryGetPerProc(
+    void
+    )
+{
+    return &MsQuicLib.PerProc[QuicLibraryGetCurrentPartition()];
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+inline
 uint16_t
 QuicPartitionIdCreate(
     uint16_t BaseIndex
@@ -367,15 +376,13 @@ QuicPerfCounterAdd(
     )
 {
     CXPLAT_DBG_ASSERT(Type >= 0 && Type < QUIC_PERF_COUNTER_MAX);
-    uint32_t ProcIndex = CxPlatProcCurrentNumber();
-    CXPLAT_DBG_ASSERT(ProcIndex < (uint32_t)MsQuicLib.PartitionCount);
-    InterlockedExchangeAdd64(&(MsQuicLib.PerProc[ProcIndex].PerfCounters[Type]), Value);
+    InterlockedExchangeAdd64(&(QuicLibraryGetPerProc()->PerfCounters[Type]), Value);
 }
 
 #define QuicPerfCounterIncrement(Type) QuicPerfCounterAdd(Type, 1)
 #define QuicPerfCounterDecrement(Type) QuicPerfCounterAdd(Type, -1)
 
-#define QUIC_PERF_SAMPLE_INTERVAL_S    30 // 30 seconds
+#define QUIC_PERF_SAMPLE_INTERVAL_S    1 // 1 second
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void
@@ -519,6 +526,15 @@ _IRQL_requires_max_(DISPATCH_LEVEL)
 BOOLEAN
 QuicLibraryTryAddRefBinding(
     _In_ QUIC_BINDING* Binding
+    );
+
+//
+// The function initializes the library execution context if not already done.
+//
+_IRQL_requires_max_(PASSIVE_LEVEL)
+QUIC_STATUS
+QuicLibraryEnsureExecutionContext(
+    void
     );
 
 //

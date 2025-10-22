@@ -1,5 +1,5 @@
 <h1 align="center"><img src="docs/images/readme_logo.png" width="500" alt="MsQuic logo"/></h1>
-
+   
 [![Discord](https://img.shields.io/discord/827744285595271168?label=Discord&logo=discord&logoColor=white&color=7289DA)](https://discord.gg/YGAtCwTSsc)
 [![Documentation](https://img.shields.io/static/v1?label=Documentation&message=API&color=yellow)](https://microsoft.github.io/msquic/msquicdocs/docs/API.html)
 [![Perf Dashboard](https://img.shields.io/static/v1?label=Performance&message=Dashboard&color=blue)](https://microsoft.github.io/netperf/dist/)
